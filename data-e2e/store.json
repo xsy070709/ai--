@@ -1,0 +1,198 @@
+{
+  "active_session_id": "default",
+  "sessions": {
+    "default": {
+      "id": "default",
+      "title": "长期聊天",
+      "created_at": "2026-07-01T21:49:18+08:00",
+      "updated_at": "2026-07-01T21:49:20+08:00",
+      "messages": [
+        {
+          "id": "msg_2cbc7553d890",
+          "role": "user",
+          "content": "我们约定下次继续把项目拆成小任务。",
+          "created_at": "2026-07-01T21:49:20+08:00"
+        },
+        {
+          "id": "msg_9836e1154eb9",
+          "role": "assistant",
+          "content": "我先记下你说的。",
+          "created_at": "2026-07-01T21:49:20+08:00",
+          "meta": {
+            "provider": "local",
+            "model": "fallback",
+            "degraded": true,
+            "used_memories": [],
+            "memory_audit": {
+              "status": "ok",
+              "issues": [],
+              "checked_items": 0,
+              "disclosure_mode": "quiet",
+              "followup_mode": "none"
+            }
+          }
+        },
+        {
+          "id": "msg_0cec5cb43b03",
+          "role": "user",
+          "content": "继续上次那个项目",
+          "created_at": "2026-07-01T21:49:20+08:00"
+        },
+        {
+          "id": "msg_4779344231aa",
+          "role": "assistant",
+          "content": "我先记下你说的。",
+          "created_at": "2026-07-01T21:49:20+08:00",
+          "meta": {
+            "provider": "local",
+            "model": "fallback",
+            "degraded": true,
+            "used_memories": [
+              "mem_5ecc96bef482"
+            ],
+            "memory_audit": {
+              "status": "warn",
+              "issues": [
+                {
+                  "severity": "warn",
+                  "type": "missed_expected_followup",
+                  "memory_id": "mem_5ecc96bef482",
+                  "message": "本轮允许自然接续，但回复没有明显使用相关记忆。"
+                }
+              ],
+              "checked_items": 1,
+              "disclosure_mode": "can_mention",
+              "followup_mode": "gentle_follow_up"
+            }
+          }
+        }
+      ],
+      "summaries": []
+    }
+  },
+  "persona_versions": [],
+  "active_persona_id": null,
+  "memories": [
+    {
+      "id": "mem_5ecc96bef482",
+      "type": "shared_experience",
+      "content": "共同经历/约定：我们约定下次继续把项目拆成小任务。",
+      "confidence": 0.74,
+      "importance": 0.83,
+      "salience": 0.8,
+      "valence": "neutral",
+      "stability": "medium",
+      "source_type": "chat",
+      "created_at": "2026-07-01T21:49:20+08:00",
+      "updated_at": "2026-07-01T21:49:20+08:00",
+      "last_used_at": "2026-07-01T21:49:20+08:00",
+      "last_reinforced_at": null,
+      "use_count": 1,
+      "reinforcement_count": 0,
+      "sensitivity_level": "low",
+      "is_user_confirmed": false,
+      "status": "active",
+      "open": true,
+      "tags": [
+        "共同经历",
+        "我们约定下次继续把项目拆成小任务",
+        "约定",
+        "项目"
+      ],
+      "evidence": [
+        {
+          "text": "我们约定下次继续把项目拆成小任务。",
+          "created_at": "2026-07-01T21:49:20+08:00"
+        }
+      ],
+      "surface_policy": "natural_follow_up",
+      "extractor": "rule_based",
+      "quality_decision": "accept",
+      "quality_reason": "低风险且足够明确"
+    }
+  ],
+  "generation_logs": [
+    {
+      "id": "gen_25e088951865",
+      "created_at": "2026-07-01T21:49:20+08:00",
+      "purpose": "chat",
+      "provider": "local",
+      "model": "fallback",
+      "degraded": true,
+      "elapsed_ms": 0,
+      "error": "missing DEEPSEEK_API_KEY",
+      "usage": {
+        "estimated_prompt_chars": 259
+      },
+      "prompt_manifest": {
+        "work_memory_count": 2,
+        "used_memory_ids": [],
+        "used_memory_reasons": {},
+        "new_memory_ids": [
+          "mem_5ecc96bef482"
+        ],
+        "corrected_memory_ids": [],
+        "deleted_memory_ids": [],
+        "correction_created_ids": [],
+        "queued_memory_ids": [],
+        "rejected_memory_ids": [],
+        "closed_memory_ids": [],
+        "decayed_memory_ids": [],
+        "archived_memory_ids": [],
+        "reflection_ids": [],
+        "followup_mode": "none",
+        "disclosure_mode": "quiet",
+        "memory_audit_status": "ok",
+        "memory_audit_issues": [],
+        "memory_extractor": "rule_based",
+        "has_persona": false
+      }
+    },
+    {
+      "id": "gen_33f9121a9b53",
+      "created_at": "2026-07-01T21:49:20+08:00",
+      "purpose": "chat",
+      "provider": "local",
+      "model": "fallback",
+      "degraded": true,
+      "elapsed_ms": 0,
+      "error": "missing DEEPSEEK_API_KEY",
+      "usage": {
+        "estimated_prompt_chars": 577
+      },
+      "prompt_manifest": {
+        "work_memory_count": 4,
+        "used_memory_ids": [
+          "mem_5ecc96bef482"
+        ],
+        "used_memory_reasons": {
+          "mem_5ecc96bef482": "待跟进、旧事接续"
+        },
+        "new_memory_ids": [],
+        "corrected_memory_ids": [],
+        "deleted_memory_ids": [],
+        "correction_created_ids": [],
+        "queued_memory_ids": [],
+        "rejected_memory_ids": [],
+        "closed_memory_ids": [],
+        "decayed_memory_ids": [],
+        "archived_memory_ids": [],
+        "reflection_ids": [],
+        "followup_mode": "gentle_follow_up",
+        "disclosure_mode": "can_mention",
+        "memory_audit_status": "warn",
+        "memory_audit_issues": [
+          {
+            "severity": "warn",
+            "type": "missed_expected_followup",
+            "memory_id": "mem_5ecc96bef482",
+            "message": "本轮允许自然接续，但回复没有明显使用相关记忆。"
+          }
+        ],
+        "memory_extractor": "rule_based",
+        "has_persona": false
+      }
+    }
+  ],
+  "memory_confirmations": []
+}

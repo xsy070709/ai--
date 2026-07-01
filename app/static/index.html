@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>虚拟好友</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-mark">友</div>
+          <div>
+            <h1>虚拟好友</h1>
+            <p>单窗口长期聊天 MVP</p>
+          </div>
+        </header>
+
+        <section class="panel">
+          <div class="panel-title">模型</div>
+          <div class="status-row">
+            <span id="modelName">DeepSeek-V4</span>
+            <strong id="modelStatus">检查中</strong>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">人格</div>
+          <div id="personaBox" class="persona-empty">尚未导入背景设定</div>
+          <textarea id="backgroundInput" placeholder="粘贴背景设定，例如：名字：林夏。关系定位：长期陪伴型虚拟好友。性格：温柔、理性、少说教。"></textarea>
+          <button id="importPersonaButton" class="primary">导入并初始化</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">分层记忆</div>
+          <div id="memoryLayers" class="memory-layers"></div>
+        </section>
+      </aside>
+
+      <main class="chat">
+        <header class="chat-topbar">
+          <div>
+            <h2>长期聊天窗口</h2>
+            <p>背景设定、人格记忆和长期记忆会参与回复编排</p>
+          </div>
+          <div id="debugMeta" class="debug-meta">等待消息</div>
+        </header>
+
+        <section id="messages" class="messages" aria-live="polite"></section>
+
+        <form id="composer" class="composer">
+          <textarea id="messageInput" placeholder="输入消息。试试：记住我喜欢安静一点的回复。" rows="2"></textarea>
+          <button class="send" type="submit">发送</button>
+        </form>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
