@@ -958,6 +958,38 @@ def test_sqlite_store_implements_snapshot_mutate_and_search(tmp_path) -> None:
     assert embedding_count == 1
 
 
+def test_sqlite_projection_tolerates_duplicate_entity_ids(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    duplicate_memory = make_memory("preference", "用户喜欢安静一点的回复", 0.9, True, "记住")
+    duplicate_memory["id"] = "mem_duplicate"
+    duplicate_message = {"id": "msg_duplicate", "role": "user", "content": "你好", "created_at": "2026-07-03T10:00:00+08:00"}
+
+    def mutate(state):
+        session = state["sessions"][state["active_session_id"]]
+        session["messages"].extend([duplicate_message, dict(duplicate_message)])
+        state.setdefault("memories", []).extend([duplicate_memory, dict(duplicate_memory)])
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert store.search_memories("安静")
+    with store._connect() as db:
+        message_count = db.execute("SELECT COUNT(*) AS count FROM messages WHERE id = 'msg_duplicate'").fetchone()["count"]
+        memory_count = db.execute("SELECT COUNT(*) AS count FROM memories WHERE id = 'mem_duplicate'").fetchone()["count"]
+
+    assert message_count == 1
+    assert memory_count == 1
+
+
 def test_create_store_uses_configured_backend(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,

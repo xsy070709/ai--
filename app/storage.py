@@ -324,7 +324,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         summaries = session.get("summaries", [])
         db.execute(
             """
-            INSERT INTO sessions (id, title, created_at, updated_at, message_count, summary_count)
+            INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, message_count, summary_count)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
@@ -339,7 +339,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         for message in messages:
             db.execute(
                 """
-                INSERT INTO messages (id, session_id, role, content, created_at, meta_json)
+                INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at, meta_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -355,7 +355,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
     for memory in state.get("memories", []):
         db.execute(
             """
-            INSERT INTO memories (
+            INSERT OR REPLACE INTO memories (
                 id, type, content, importance, salience, confidence, status, open,
                 created_at, updated_at, last_used_at, tags_json, evidence_json, full_json
             )
@@ -386,20 +386,20 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
 
         vector = semantic_vector(memory.get("content", ""))
         db.execute(
-            "INSERT INTO memory_embeddings (memory_id, model, dimensions, vector_json) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO memory_embeddings (memory_id, model, dimensions, vector_json) VALUES (?, ?, ?, ?)",
             (memory.get("id"), "local-hash-v1", len(vector), json.dumps(vector)),
         )
 
     for persona in state.get("persona_versions", []):
         db.execute(
-            "INSERT INTO persona_versions (id, status, version, full_json) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO persona_versions (id, status, version, full_json) VALUES (?, ?, ?, ?)",
             (persona.get("id"), persona.get("status"), persona.get("version"), json.dumps(persona, ensure_ascii=False)),
         )
 
     for log in state.get("generation_logs", []):
         db.execute(
             """
-            INSERT INTO generation_logs (
+            INSERT OR REPLACE INTO generation_logs (
                 id, created_at, purpose, provider, model, degraded, elapsed_ms,
                 error, prompt_manifest_json, feedback_signals_json, full_json
             )
