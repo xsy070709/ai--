@@ -374,6 +374,16 @@ def test_semantic_completion_words_close_open_loop() -> None:
     assert closed[0]["open"] is False
 
 
+def test_intent_completion_signal_closes_open_loop() -> None:
+    memories = []
+    upsert_memories(memories, extract_memory_candidates("明天下午我要交材料，现在有点焦虑。"))
+
+    closed = close_resolved_open_loops(memories, "材料递上去了，松口气。", intent={"has_completion_signal": True})
+
+    assert closed
+    assert closed[0]["open"] is False
+
+
 def test_expanded_completion_words_close_open_loop() -> None:
     memories = []
     upsert_memories(memories, extract_memory_candidates("明天中午要汇报材料。"))
@@ -460,6 +470,21 @@ def test_memory_context_uses_intent_to_override_casual_followup() -> None:
     context = build_memory_context([memory], "还行", intent=intent)
 
     assert context["followup_plan"]["mode"] == "gentle_follow_up"
+
+
+def test_memory_context_uses_intent_completion_for_closure_plan() -> None:
+    memory = make_memory("goal", "待跟进：整理项目材料", 0.8, False, "整理项目材料", open_item=True)
+    intent = {
+        "is_casual_chat": False,
+        "has_followup_invitation": False,
+        "has_completion_signal": True,
+        "has_correction_intent": False,
+        "information_density": 2.4,
+    }
+
+    context = build_memory_context([memory], "材料递上去了", intent=intent)
+
+    assert context["followup_plan"]["mode"] == "acknowledge_closure"
 
 
 def test_memory_context_uses_intent_followup_invitation() -> None:

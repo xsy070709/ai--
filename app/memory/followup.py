@@ -13,8 +13,12 @@ PARAMS = DEFAULT_MEMORY_PARAMS.conversation
 COMPLETION_WORDS = PARAMS.completion_words
 
 
-def close_resolved_open_loops(memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
-    if not has_completion_signal(user_text):
+def close_resolved_open_loops(
+    memories: list[dict[str, Any]],
+    user_text: str,
+    intent: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not _has_completion_signal(user_text, intent):
         return []
 
     user_tokens = set(tokens(user_text))
@@ -40,6 +44,10 @@ def _has_completion_overlap(memory_content: str, user_text: str) -> bool:
     return any(len(token) >= 2 and token in user_text for token in tokens(memory_compact))
 
 
+def _has_completion_signal(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    return has_completion_signal(user_text) or bool(intent and intent.get("has_completion_signal"))
+
+
 def build_followup_plan(
     profile: dict[str, Any],
     recalled: list[dict[str, Any]],
@@ -47,7 +55,7 @@ def build_followup_plan(
     now: str | None = None,
     intent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if has_completion_signal(user_text):
+    if _has_completion_signal(user_text, intent):
         return {"mode": "acknowledge_closure", "items": [], "instruction": "用户可能在汇报事项完成，先回应结果，不要继续追问同一待办。"}
 
     open_recalled = [annotate_time_state(memory, now) if memory.get("type") == "goal" else memory for memory in recalled if memory.get("open")]

@@ -174,7 +174,7 @@ class ChatService:
                 active_session.setdefault("summaries", []).append(summary)
             current_memories = next_state.setdefault("memories", [])
             correction_result = apply_user_corrections(current_memories, memory_user_text)
-            closed_memories = close_resolved_open_loops(current_memories, memory_user_text)
+            closed_memories = close_resolved_open_loops(current_memories, memory_user_text, intent=intent)
             mark_recalled(current_memories, [m["id"] for m in memories])
             upsert_memories(current_memories, correction_result["created"])
             upsert_memories(current_memories, reviewed["accepted"])
