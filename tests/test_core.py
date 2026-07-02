@@ -684,10 +684,13 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     assert service.status()["layers"]["persona"]["count"] == 1
     assert service.status()["profile"]["preferences"]
     logs = service.store.snapshot()["generation_logs"]
-    assert "当前真实时间" in logs[-1]["api_messages"][0]["content"]
+    assert "当前真实时间" in logs[-1]["api_messages"][3]["content"]
     assert logs[-1]["prompt_manifest"]["time_context"]["date"]
     assert logs[-1]["prompt_manifest"]["api_message_count"] == len(logs[-1]["api_messages"])
-    assert logs[-1]["prompt_manifest"]["work_memory_count"] == len(logs[-1]["api_messages"]) - 3
+    assert logs[-1]["prompt_manifest"]["prompt_segments"][0]["name"] == "stable_persona"
+    assert logs[-1]["prompt_manifest"]["prompt_segments"][1]["name"] == "session_summaries"
+    assert logs[-1]["prompt_manifest"]["prompt_segments"][3]["name"] == "time_context"
+    assert logs[-1]["prompt_manifest"]["work_memory_count"] == len(logs[-1]["api_messages"]) - 5
 
 
 def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
@@ -736,9 +739,10 @@ def test_chat_service_injects_session_summaries_into_prompt(tmp_path) -> None:
     asyncio.run(service.chat("继续刚才那个"))
 
     latest_log = service.store.snapshot()["generation_logs"][-1]
-    dynamic_system = latest_log["api_messages"][1]["content"]
-    assert "会话摘要" in dynamic_system
-    assert "项目材料推进卡住了" in dynamic_system
+    summary_system = latest_log["api_messages"][1]["content"]
+    assert "会话摘要" in summary_system
+    assert "项目材料推进卡住了" in summary_system
+    assert latest_log["prompt_manifest"]["work_memory_after_message_count"] == 16
     assert latest_log["prompt_manifest"]["used_session_summary_ids"] == ["summary_1"]
     assert latest_log["prompt_manifest"]["api_message_count"] == len(latest_log["api_messages"])
 
@@ -947,6 +951,14 @@ def test_work_memory_window_is_dynamic() -> None:
 
     assert len(work_memory(messages, "早")) == 8
     assert len(work_memory(messages, "我现在因为项目很焦虑，继续上次")) == 36
+
+
+def test_work_memory_starts_after_summary_boundary() -> None:
+    messages = [{"role": "user", "content": f"消息 {index}"} for index in range(20)]
+
+    memory = work_memory(messages, "继续", after_message_count=16)
+
+    assert [item["content"] for item in memory] == ["消息 16", "消息 17", "消息 18", "消息 19"]
 
 
 def test_casual_work_memory_stays_short_after_recent_emotion() -> None:

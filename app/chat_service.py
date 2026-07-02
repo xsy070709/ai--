@@ -134,7 +134,8 @@ class ChatService:
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
         prompt_summaries = session.get("summaries", [])
-        prompt_work_memory = work_memory(session.get("messages", []), user_text)
+        prompt_summary_boundary = int(prompt_summaries[-1].get("message_count", 0)) if prompt_summaries else 0
+        prompt_work_memory = work_memory(session.get("messages", []), user_text, after_message_count=prompt_summary_boundary)
         model_messages = self._build_prompt(
             persona,
             memory_context,
@@ -185,8 +186,10 @@ class ChatService:
             prompt_manifest = {
                 "api_message_count": len(model_messages),
                 "work_memory_count": len(prompt_work_memory),
+                "work_memory_after_message_count": prompt_summary_boundary,
                 "session_summary_count": len(prompt_summaries),
                 "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
+                "prompt_segments": _prompt_segments(model_messages),
                 "logical_turn": logical_turn,
                 "used_memory_ids": [m["id"] for m in memories],
                 "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
@@ -324,18 +327,20 @@ class ChatService:
     ) -> list[dict[str, str]]:
         time_context = time_context or current_time_context()
         prompt_work_memory = prompt_work_memory or []
-        dynamic_context = "\n".join(
+        summary_context = _format_session_summaries(summaries or [])
+        memory_runtime_context = "\n".join(
             [
-                "运行时上下文：",
-                time_context["prompt_text"],
-                _format_session_summaries(summaries or []),
+                "记忆上下文：",
                 "记忆系统给出的长期画像和本轮相关记忆如下。只在自然、有帮助时使用，不要机械复述。",
                 memory_context["prompt_text"],
             ]
         )
+        time_runtime_context = "\n".join(["运行时上下文：", time_context["prompt_text"]])
         return [
             {"role": "system", "content": _stable_system_prompt(persona)},
-            {"role": "system", "content": dynamic_context},
+            {"role": "system", "content": summary_context},
+            {"role": "system", "content": memory_runtime_context},
+            {"role": "system", "content": time_runtime_context},
             *prompt_work_memory,
             {"role": "user", "content": user_text},
         ]
@@ -403,3 +408,31 @@ def _format_session_summaries(summaries: list[dict[str, Any]]) -> str:
         else:
             lines.append(f"- {marker} {text}")
     return "\n".join(lines)
+
+
+def _prompt_segments(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    system_index = 0
+    system_names = ["stable_persona", "session_summaries", "memory_context", "time_context"]
+    for index, message in enumerate(messages):
+        role = message.get("role", "")
+        if role == "system":
+            name = system_names[system_index] if system_index < len(system_names) else f"system_{system_index + 1}"
+            volatile = name == "time_context"
+            system_index += 1
+        elif role == "user" and index == len(messages) - 1:
+            name = "current_user_message"
+            volatile = True
+        else:
+            name = "work_memory"
+            volatile = True
+        segments.append(
+            {
+                "index": index,
+                "role": role,
+                "name": name,
+                "chars": len(message.get("content", "")),
+                "volatile": volatile,
+            }
+        )
+    return segments

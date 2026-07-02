@@ -198,11 +198,22 @@ class DeepSeekGateway:
 
     def _prompt_stats(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         system_messages = [message for message in messages if message.get("role") == "system"]
+        system_segments = [
+            {
+                "index": index,
+                "chars": len(message.get("content", "")),
+                "first_line": message.get("content", "").splitlines()[0] if message.get("content") else "",
+            }
+            for index, message in enumerate(system_messages)
+        ]
         return {
             "message_count": len(messages),
             "total_chars": sum(len(message.get("content", "")) for message in messages),
             "stable_system_chars": len(system_messages[0].get("content", "")) if system_messages else 0,
-            "dynamic_system_chars": len(system_messages[1].get("content", "")) if len(system_messages) > 1 else 0,
+            "summary_system_chars": len(system_messages[1].get("content", "")) if len(system_messages) > 1 else 0,
+            "memory_system_chars": len(system_messages[2].get("content", "")) if len(system_messages) > 2 else 0,
+            "time_system_chars": len(system_messages[3].get("content", "")) if len(system_messages) > 3 else 0,
+            "system_segments": system_segments,
         }
 
     def _fallback(self, messages: list[dict[str, str]], started: float, error: str) -> LLMResult:

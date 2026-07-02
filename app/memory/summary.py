@@ -12,10 +12,16 @@ from .text import emotion_tags, topics_from_text, unfinished_items
 PARAMS = DEFAULT_MEMORY_PARAMS.summary
 
 
-def work_memory(messages: list[dict[str, Any]], user_text: str = "", limit: int | None = None) -> list[dict[str, str]]:
+def work_memory(
+    messages: list[dict[str, Any]],
+    user_text: str = "",
+    limit: int | None = None,
+    after_message_count: int = 0,
+) -> list[dict[str, str]]:
     if limit is None:
         limit = _dynamic_work_memory_limit(messages, user_text)
-    recent = messages[-limit:]
+    unsummarized = messages[max(0, after_message_count) :]
+    recent = unsummarized[-limit:]
     return [{"role": item["role"], "content": item["content"]} for item in recent]
 
 

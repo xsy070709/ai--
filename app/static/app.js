@@ -230,7 +230,7 @@ function renderDevApi() {
 
 function formatPromptStats(stats) {
   if (!stats) return "prompt stats n/a";
-  return `prompt ${stats.total_chars || 0} chars · stable ${stats.stable_system_chars || 0} · dynamic ${stats.dynamic_system_chars || 0}`;
+  return `prompt ${stats.total_chars || 0} chars · stable ${stats.stable_system_chars || 0} · summary ${stats.summary_system_chars || 0} · memory ${stats.memory_system_chars || 0} · time ${stats.time_system_chars || 0}`;
 }
 
 function renderDevRaw() {
