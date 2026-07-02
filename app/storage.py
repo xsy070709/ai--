@@ -280,7 +280,9 @@ class SqliteStore:
                     """,
                     (f"%{query}%", limit),
                 ).fetchall()
-        return [json.loads(row["full_json"]) for row in rows]
+        if rows:
+            return [json.loads(row["full_json"]) for row in rows]
+        return self.search_memories_semantic(query, limit=limit)
 
     def search_memories_semantic(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         from .memory.semantic import cosine_similarity, semantic_vector
