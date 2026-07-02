@@ -997,6 +997,7 @@ def test_topic_shift_summary_covers_previous_topic_only() -> None:
     assert summary is not None
     assert "项目材料还没整理" in summary["summary"]
     assert "面试还要准备自我介绍" not in summary["summary"]
+    assert summary["message_count"] == 6
     assert summary["covered_message_count"] == 6
 
 
@@ -1028,6 +1029,7 @@ def test_summary_after_existing_summary_starts_from_last_boundary() -> None:
     assert "学习计划" not in summary["summary"]
     assert "项目今天继续推进" in summary["summary"]
     assert "面试还要准备自我介绍" not in summary["summary"]
+    assert summary["message_count"] == 20
 
 
 def test_topic_shift_trigger_ignores_already_summarized_history() -> None:

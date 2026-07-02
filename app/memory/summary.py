@@ -23,13 +23,14 @@ def build_session_summary(messages: list[dict[str, Any]], after_message_count: i
     if len(messages) < PARAMS.topic_shift_min_messages:
         return None
 
-    segment = messages[max(0, after_message_count) :]
+    segment_start = max(0, after_message_count)
+    segment = messages[segment_start:]
     if not segment:
         return None
     summary_messages = _previous_topic_messages(segment) if _has_topic_shift(segment) else []
     if not summary_messages:
-        window = min(len(segment), PARAMS.min_summary_messages)
-        summary_messages = segment[-window:]
+        summary_messages = segment
+    covered_message_count = segment_start + len(summary_messages)
     user_lines = [m["content"] for m in summary_messages if m["role"] == "user"]
     joined = " ".join(user_lines)
     open_items = unfinished_items(joined)
@@ -38,7 +39,7 @@ def build_session_summary(messages: list[dict[str, Any]], after_message_count: i
     return {
         "id": new_id("summary"),
         "created_at": now_iso(),
-        "message_count": len(messages),
+        "message_count": covered_message_count,
         "covered_message_count": len(summary_messages),
         "summary": _summary_sentence(user_lines, topics, emotions, open_items),
         "topics": topics,
