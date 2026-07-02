@@ -1030,6 +1030,26 @@ def test_summary_after_existing_summary_starts_from_last_boundary() -> None:
     assert "面试还要准备自我介绍" not in summary["summary"]
 
 
+def test_topic_shift_trigger_ignores_already_summarized_history() -> None:
+    messages = [
+        {"role": "user", "content": "项目推进有点卡"},
+        {"role": "assistant", "content": "先拆一下。"},
+        {"role": "user", "content": "项目材料还没整理"},
+        {"role": "assistant", "content": "我们列清单。"},
+        {"role": "user", "content": "明天面试有点紧张"},
+        {"role": "assistant", "content": "先稳住。"},
+        {"role": "user", "content": "面试还要准备自我介绍"},
+        {"role": "assistant", "content": "我们先写一版。"},
+        {"role": "user", "content": "面试简历再改一下"},
+        {"role": "assistant", "content": "可以。"},
+        {"role": "user", "content": "面试问题再练一遍"},
+        {"role": "assistant", "content": "来。"},
+    ]
+    summaries = [{"message_count": 8}]
+
+    assert should_build_session_summary(messages, summaries) is False
+
+
 def test_same_topic_does_not_create_fixed_interval_summary() -> None:
     messages = []
     for index in range(16):

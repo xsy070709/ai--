@@ -60,7 +60,7 @@ def should_build_session_summary(messages: list[dict[str, Any]], summaries: list
     last_summary_count = int(summaries[-1].get("message_count", 0)) if summaries else 0
     if summaries and count - last_summary_count >= PARAMS.max_summary_interval:
         return True
-    return _has_topic_shift(messages)
+    return _has_topic_shift(messages[max(0, last_summary_count) :])
 
 
 def _dynamic_work_memory_limit(messages: list[dict[str, Any]], user_text: str) -> int:
