@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from .signals import emotion_tags_for, has_task_signal, has_time_signal
+
 
 def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
@@ -20,15 +22,7 @@ def topics_from_text(text: str) -> list[str]:
 
 
 def emotion_tags(text: str) -> list[str]:
-    mapping = {
-        "压力": ["压力", "焦虑", "紧张", "拖延", "效率不高"],
-        "疲惫": ["累", "困", "疲惫", "没劲"],
-        "低落": ["难受", "委屈", "低落", "沮丧"],
-        "烦躁": ["烦", "烦躁", "生气", "火大"],
-        "积极": ["开心", "高兴", "舒服", "顺利"],
-        "脆弱": ["害怕", "崩溃", "撑不住", "想哭"],
-    }
-    return [label for label, words in mapping.items() if any(word in text for word in words)]
+    return emotion_tags_for(text)
 
 
 def emotion_cause(text: str) -> str:
@@ -41,9 +35,7 @@ def emotion_cause(text: str) -> str:
 def unfinished_items(text: str) -> list[str]:
     items = []
     for sentence in re.split(r"[。！？.!?]", text):
-        if any(time_word in sentence for time_word in ["明天", "今晚", "下午", "周末", "下周", "月底", "等会"]) and any(
-            verb in sentence for verb in ["要", "得", "准备", "提交", "面试", "考试", "开会", "做完", "交材料"]
-        ):
+        if has_time_signal(sentence) and has_task_signal(sentence):
             items.append(sentence.strip())
     return items[:5]
 
@@ -81,7 +73,8 @@ def infer_type(content: str) -> str:
 
 
 def valence_from_text(text: str) -> str:
-    if any(word in text for word in ["害怕", "崩溃", "难受", "撑不住", "焦虑", "压力"]):
+    emotions = set(emotion_tags(text))
+    if emotions & {"脆弱", "压力", "低落"}:
         return "vulnerable"
     if any(word in text for word in ["讨厌", "烦", "生气", "雷区"]):
         return "negative"

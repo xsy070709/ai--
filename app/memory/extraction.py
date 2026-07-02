@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .schema import make_memory
+from .signals import has_task_signal, has_time_signal, information_density, is_high_density
 from .text import clean_text, emotion_cause, emotion_tags, infer_type, normalize_content, valence_from_text
 
 
@@ -110,8 +111,8 @@ def _extract_boundaries(text: str) -> list[dict[str, Any]]:
 
 def _extract_goals_and_tasks(text: str) -> list[dict[str, Any]]:
     candidates = []
-    has_time = any(word in text for word in ["明天", "今晚", "下午", "周末", "下周", "月底", "等会"])
-    has_task = any(word in text for word in ["要", "得", "准备", "提交", "面试", "考试", "开会", "交材料", "做完"])
+    has_time = has_time_signal(text)
+    has_task = has_task_signal(text)
     if has_time and has_task:
         candidates.append(make_memory("goal", f"待跟进：{text}", 0.78, False, text, open_item=True, valence=valence_from_text(text)))
     if any(word in text for word in ["目标", "计划", "想要", "希望做到"]):
@@ -146,7 +147,7 @@ def _extract_relationship_signals(text: str) -> list[dict[str, Any]]:
 
 
 def _extract_shared_experiences(text: str) -> list[dict[str, Any]]:
-    if any(word in text for word in ["我们约定", "一起", "下次继续", "刚才说好", "以后我们"]) and len(text) < 120:
+    if any(word in text for word in ["我们约定", "一起", "下次继续", "刚才说好", "以后我们"]):
         return [
             make_memory(
                 "shared_experience",
@@ -162,10 +163,13 @@ def _extract_shared_experiences(text: str) -> list[dict[str, Any]]:
 
 
 def _extract_episodic_memory(text: str) -> list[dict[str, Any]]:
-    if len(text) > 18 and any(word in text for word in ["今天", "刚才", "昨晚", "这次", "现在"]) and any(
-        word in text for word in ["发生", "聊", "做", "遇到", "感觉", "因为"]
-    ):
+    has_event_context = any(word in text for word in ["今天", "刚才", "昨晚", "这次", "现在", "分手", "失恋"]) and any(
+        word in text for word in ["发生", "聊", "做", "遇到", "感觉", "因为", "分手", "失恋"]
+    )
+    if has_event_context and (len(text) > 18 or is_high_density(text)):
         return [make_memory("episodic", f"近期事件：{text}", 0.58, False, text, valence=valence_from_text(text), stability="low")]
+    if information_density(text) >= 2.4 and any(word in text for word in ["分手", "失恋", "被辞", "吵架"]):
+        return [make_memory("episodic", f"近期事件：{text}", 0.62, False, text, valence=valence_from_text(text), stability="low")]
     return []
 
 

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from .params import DEFAULT_MEMORY_PARAMS
+from .signals import looks_like_casual_chat
 
-INVITE_WORDS = ["还记得", "之前", "上次", "继续", "后来", "刚才说", "那个"]
+
+PARAMS = DEFAULT_MEMORY_PARAMS.disclosure
+INVITE_WORDS = PARAMS.invite_words
 
 
 def build_disclosure_plan(recalled: list[dict[str, Any]], user_text: str, followup_plan: dict[str, Any]) -> dict[str, Any]:
@@ -44,13 +48,13 @@ def _decide_action(memory: dict[str, Any], user_text: str, followup_plan: dict[s
         return "silent", "敏感记忆，除非用户明确问起，否则不表露"
     if memory.get("open") and followup_plan.get("mode") == "user_invited_follow_up":
         return "mention", "当前适合自然跟进未完成事项"
-    if memory.get("open") and followup_plan.get("mode") == "gentle_follow_up" and memory.get("recall_score", 0) >= 4.5:
+    if memory.get("open") and followup_plan.get("mode") == "gentle_follow_up" and memory.get("recall_score", 0) >= PARAMS.mention_recall_threshold:
         return "mention", "当前话题强相关，可轻问未完成事项"
     if invited and memory_type in {"shared_experience", "goal", "episodic", "stable_impression"}:
         return "mention", "用户主动邀请接续旧事"
     if memory_type in {"emotion_pattern", "relationship_signal", "stable_impression"}:
         return "hint", "只影响语气，不要贴标签式复述"
-    if memory.get("recall_score", 0) >= 4.2 and not _looks_like_casual_chat(user_text):
+    if memory.get("recall_score", 0) >= PARAMS.hint_recall_threshold and not _looks_like_casual_chat(user_text):
         return "hint", "相关性较高，可轻描淡写地带入"
     return "silent", "相关但不适合主动提起"
 
@@ -76,4 +80,4 @@ def _instruction(items: list[dict[str, Any]]) -> str:
 
 
 def _looks_like_casual_chat(user_text: str) -> bool:
-    return len(user_text) <= 12 and not any(word in user_text for word in ["焦虑", "难受", "怎么办", "继续", "上次", "记得"])
+    return looks_like_casual_chat(user_text, PARAMS.casual_exemption_words, PARAMS.casual_max_chars)

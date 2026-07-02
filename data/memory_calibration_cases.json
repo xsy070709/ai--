@@ -1,0 +1,18 @@
+[
+  {
+    "name": "short vulnerable event is remembered",
+    "user_text": "我分手了",
+    "expected_memory_types": ["emotion_pattern", "episodic"]
+  },
+  {
+    "name": "semantic sleep recall",
+    "seed_memories": ["记住我最近失眠严重。"],
+    "user_text": "我最近睡不好",
+    "expected_recall_contains": ["失眠"]
+  },
+  {
+    "name": "long shared agreement is retained",
+    "user_text": "我们约定下次继续把项目拆成小任务，然后每次只检查一个最卡住的地方，不要一下子铺开太多细节。",
+    "expected_memory_types": ["shared_experience"]
+  }
+]

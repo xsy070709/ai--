@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .params import DEFAULT_MEMORY_PARAMS
+
 
 AUTO_ACCEPT_TYPES = {
     "preference",
@@ -13,7 +15,7 @@ AUTO_ACCEPT_TYPES = {
     "stable_impression",
 }
 CONFIRM_TYPES = {"fact", "episodic", "boundary", "dislike"}
-REJECT_MIN_CONFIDENCE = 0.45
+PARAMS = DEFAULT_MEMORY_PARAMS.quality
 
 
 def review_memory_candidates(candidates: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -40,19 +42,19 @@ def review_memory(memory: dict[str, Any]) -> tuple[str, str]:
     memory_type = memory.get("type", "")
     confidence = float(memory.get("confidence", 0))
 
-    if not content or len(content) < 4:
+    if not content or len(content) < PARAMS.min_content_length:
         return "reject", "内容过短"
-    if confidence < REJECT_MIN_CONFIDENCE:
+    if confidence < PARAMS.reject_min_confidence:
         return "reject", "置信度过低"
     if memory.get("sensitivity_level") not in {"low", None}:
         return "confirm", "涉及较高敏感度，需要确认"
     if memory.get("is_user_confirmed"):
         return "accept", "用户明确要求记住"
-    if memory_type in AUTO_ACCEPT_TYPES and confidence >= 0.62:
+    if memory_type in AUTO_ACCEPT_TYPES and confidence >= PARAMS.auto_accept_min_confidence:
         return "accept", "低风险且足够明确"
     if memory_type in CONFIRM_TYPES:
         return "confirm", "可能影响长期画像，需要确认"
-    if memory.get("stability") == "low" and confidence < 0.7:
+    if memory.get("stability") == "low" and confidence < PARAMS.low_stability_confirm_threshold:
         return "confirm", "短期事件不应直接沉淀为稳定记忆"
     return "accept", "默认接受"
 

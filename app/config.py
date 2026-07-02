@@ -26,6 +26,8 @@ class Settings:
     max_retries: int
     force_local_llm: bool = False
     memory_extractor: str = "rule"
+    memory_intent_classifier: str = "rule"
+    storage_backend: str = "json"
 
     @property
     def has_deepseek_key(self) -> bool:
@@ -47,4 +49,6 @@ def load_settings() -> Settings:
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
         force_local_llm=os.getenv("LLM_FORCE_LOCAL", "").lower() in {"1", "true", "yes"},
         memory_extractor=os.getenv("MEMORY_EXTRACTOR", "rule").lower(),
+        memory_intent_classifier=os.getenv("MEMORY_INTENT_CLASSIFIER", "rule").lower(),
+        storage_backend=os.getenv("STORAGE_BACKEND", "json").lower(),
     )

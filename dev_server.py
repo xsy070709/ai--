@@ -10,13 +10,13 @@ from urllib.parse import urlparse
 from app.chat_service import ChatService
 from app.config import load_settings
 from app.llm_gateway import DeepSeekGateway
-from app.storage import JsonStore
+from app.storage import create_store
 
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "app" / "static"
 settings = load_settings()
-service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+service = ChatService(create_store(settings), DeepSeekGateway(settings))
 
 
 class Handler(BaseHTTPRequestHandler):

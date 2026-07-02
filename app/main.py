@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .chat_service import ChatService
 from .config import load_settings
 from .llm_gateway import DeepSeekGateway
-from .storage import JsonStore
+from .storage import create_store
 
 
 class ChatRequest(BaseModel):
@@ -24,7 +24,7 @@ class BackgroundRequest(BaseModel):
 
 
 settings = load_settings()
-store = JsonStore(settings)
+store = create_store(settings)
 service = ChatService(store, DeepSeekGateway(settings))
 app = FastAPI(title="AI 虚拟好友聊天 MVP")
 
