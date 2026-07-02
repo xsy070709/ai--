@@ -134,13 +134,14 @@ class ChatService:
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
         prompt_summaries = session.get("summaries", [])
+        prompt_work_memory = work_memory(session.get("messages", []), user_text)
         model_messages = self._build_prompt(
-            session.get("messages", []),
             persona,
             memory_context,
             user_text,
             time_context,
             prompt_summaries,
+            prompt_work_memory,
         )
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
@@ -182,7 +183,8 @@ class ChatService:
             queued_reflections = enqueue_confirmation(next_state, reviewed_reflections["needs_confirmation"])
             maintenance_result = maintain_memories(current_memories)
             prompt_manifest = {
-                "work_memory_count": len(work_memory(active_session["messages"], memory_user_text)),
+                "api_message_count": len(model_messages),
+                "work_memory_count": len(prompt_work_memory),
                 "session_summary_count": len(prompt_summaries),
                 "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
                 "logical_turn": logical_turn,
@@ -313,14 +315,15 @@ class ChatService:
 
     def _build_prompt(
         self,
-        messages: list[dict[str, Any]],
         persona: dict[str, Any] | None,
         memory_context: dict[str, Any],
         user_text: str,
         time_context: dict[str, str] | None = None,
         summaries: list[dict[str, Any]] | None = None,
+        prompt_work_memory: list[dict[str, str]] | None = None,
     ) -> list[dict[str, str]]:
         time_context = time_context or current_time_context()
+        prompt_work_memory = prompt_work_memory or []
         dynamic_context = "\n".join(
             [
                 "运行时上下文：",
@@ -333,7 +336,7 @@ class ChatService:
         return [
             {"role": "system", "content": _stable_system_prompt(persona)},
             {"role": "system", "content": dynamic_context},
-            *work_memory(messages, user_text),
+            *prompt_work_memory,
             {"role": "user", "content": user_text},
         ]
 

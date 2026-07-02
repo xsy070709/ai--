@@ -686,6 +686,8 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     logs = service.store.snapshot()["generation_logs"]
     assert "当前真实时间" in logs[-1]["api_messages"][0]["content"]
     assert logs[-1]["prompt_manifest"]["time_context"]["date"]
+    assert logs[-1]["prompt_manifest"]["api_message_count"] == len(logs[-1]["api_messages"])
+    assert logs[-1]["prompt_manifest"]["work_memory_count"] == len(logs[-1]["api_messages"]) - 3
 
 
 def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
@@ -738,6 +740,7 @@ def test_chat_service_injects_session_summaries_into_prompt(tmp_path) -> None:
     assert "会话摘要" in dynamic_system
     assert "项目材料推进卡住了" in dynamic_system
     assert latest_log["prompt_manifest"]["used_session_summary_ids"] == ["summary_1"]
+    assert latest_log["prompt_manifest"]["api_message_count"] == len(latest_log["api_messages"])
 
 
 def test_chat_service_records_feedback_signals(tmp_path) -> None:
