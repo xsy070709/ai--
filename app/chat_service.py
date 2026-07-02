@@ -131,6 +131,7 @@ class ChatService:
         memory_user_text = logical_turn["text"]
         memory_context = build_memory_context(state.get("memories", []), memory_user_text, now=time_context["iso"])
         intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
+        memory_context = build_memory_context(state.get("memories", []), memory_user_text, now=time_context["iso"], intent=intent)
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
         prompt_summaries = session.get("summaries", [])

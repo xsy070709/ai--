@@ -8,11 +8,17 @@ from .profile import build_user_profile
 from .recall import relevant_memories
 
 
-def build_memory_context(memories: list[dict[str, Any]], user_text: str, limit: int = 8, now: str | None = None) -> dict[str, Any]:
+def build_memory_context(
+    memories: list[dict[str, Any]],
+    user_text: str,
+    limit: int = 8,
+    now: str | None = None,
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     profile = build_user_profile(memories, now=now)
     recalled = relevant_memories(memories, user_text, limit=limit, now=now)
-    followup_plan = build_followup_plan(profile, recalled, user_text, now=now)
-    disclosure_plan = build_disclosure_plan(recalled, user_text, followup_plan)
+    followup_plan = build_followup_plan(profile, recalled, user_text, now=now, intent=intent)
+    disclosure_plan = build_disclosure_plan(recalled, user_text, followup_plan, intent=intent)
     return {
         "profile": profile,
         "recalled": recalled,

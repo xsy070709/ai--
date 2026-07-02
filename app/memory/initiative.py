@@ -10,10 +10,15 @@ PARAMS = DEFAULT_MEMORY_PARAMS.disclosure
 INVITE_WORDS = PARAMS.invite_words
 
 
-def build_disclosure_plan(recalled: list[dict[str, Any]], user_text: str, followup_plan: dict[str, Any]) -> dict[str, Any]:
+def build_disclosure_plan(
+    recalled: list[dict[str, Any]],
+    user_text: str,
+    followup_plan: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     items = []
     for memory in recalled:
-        action, reason = _decide_action(memory, user_text, followup_plan)
+        action, reason = _decide_action(memory, user_text, followup_plan, intent)
         items.append(
             {
                 "memory_id": memory["id"],
@@ -37,10 +42,15 @@ def format_disclosure_plan(plan: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _decide_action(memory: dict[str, Any], user_text: str, followup_plan: dict[str, Any]) -> tuple[str, str]:
+def _decide_action(
+    memory: dict[str, Any],
+    user_text: str,
+    followup_plan: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+) -> tuple[str, str]:
     memory_type = memory.get("type")
     policy = memory.get("surface_policy", "use_when_relevant")
-    invited = any(word in user_text for word in INVITE_WORDS)
+    invited = bool(intent and intent.get("has_followup_invitation")) or any(word in user_text for word in INVITE_WORDS)
 
     if memory_type == "boundary" or policy == "obey_silently":
         return "obey", "只默默遵守边界，不主动复述"
@@ -54,7 +64,7 @@ def _decide_action(memory: dict[str, Any], user_text: str, followup_plan: dict[s
         return "mention", "用户主动邀请接续旧事"
     if memory_type in {"emotion_pattern", "relationship_signal", "stable_impression"}:
         return "hint", "只影响语气，不要贴标签式复述"
-    if memory.get("recall_score", 0) >= PARAMS.hint_recall_threshold and not _looks_like_casual_chat(user_text):
+    if memory.get("recall_score", 0) >= PARAMS.hint_recall_threshold and not _looks_like_casual_chat(user_text, intent):
         return "hint", "相关性较高，可轻描淡写地带入"
     return "silent", "相关但不适合主动提起"
 
@@ -79,5 +89,12 @@ def _instruction(items: list[dict[str, Any]]) -> str:
     return "不要主动提旧事。"
 
 
-def _looks_like_casual_chat(user_text: str) -> bool:
+def _looks_like_casual_chat(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    if intent:
+        if intent.get("has_followup_invitation"):
+            return False
+        if float(intent.get("information_density") or 0.0) >= DEFAULT_MEMORY_PARAMS.conversation.high_density_threshold:
+            return False
+        if "is_casual_chat" in intent:
+            return bool(intent["is_casual_chat"])
     return looks_like_casual_chat(user_text, PARAMS.casual_exemption_words, PARAMS.casual_max_chars)

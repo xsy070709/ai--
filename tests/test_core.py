@@ -446,6 +446,40 @@ def test_memory_context_prioritizes_open_and_emotional_recall() -> None:
     assert "待跟进" in context["prompt_text"]
 
 
+def test_memory_context_uses_intent_to_override_casual_followup() -> None:
+    memory = make_memory("goal", "待跟进：整理项目材料", 0.8, False, "整理项目材料", open_item=True)
+    memory["recall_score"] = 4.8
+    intent = {
+        "is_casual_chat": False,
+        "has_followup_invitation": False,
+        "has_completion_signal": False,
+        "has_correction_intent": False,
+        "information_density": 2.2,
+    }
+
+    context = build_memory_context([memory], "还行", intent=intent)
+
+    assert context["followup_plan"]["mode"] == "gentle_follow_up"
+
+
+def test_memory_context_uses_intent_followup_invitation() -> None:
+    memory = make_memory("goal", "待跟进：准备面试自我介绍", 0.8, False, "准备面试自我介绍", open_item=True)
+    memory["recall_score"] = 4.8
+    intent = {
+        "is_casual_chat": True,
+        "has_followup_invitation": True,
+        "has_completion_signal": False,
+        "has_correction_intent": False,
+        "information_density": 0.2,
+    }
+
+    context = build_memory_context([memory], "那个", intent=intent)
+    disclosure = build_disclosure_plan([memory], "那个", {"mode": "user_invited_follow_up"}, intent=intent)
+
+    assert context["followup_plan"]["mode"] == "gentle_follow_up"
+    assert disclosure["mode"] == "can_mention"
+
+
 def test_elapsed_open_loop_can_be_followed_up_during_casual_chat() -> None:
     memory = make_memory("goal", "待跟进：明天中午要汇报材料", 0.8, False, "明天中午要汇报材料", open_item=True)
     memory["created_at"] = "2026-07-01T10:00:00+08:00"
