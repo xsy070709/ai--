@@ -68,7 +68,7 @@ class FakeIntentGateway(FakeStructuredGateway):
 
         self.calls.append({"purpose": purpose, "messages": messages})
         return LLMResult(
-            text='{"has_completion_signal":true,"completion_target":"面试","has_correction_intent":false,"primary_emotion":"焦虑","secondary_emotion":null,"valence":"vulnerable","is_casual_chat":false,"has_followup_invitation":false,"topics":["面试"],"unfinished_items":["准备面试材料"],"information_density":2.2}',
+            text='{"has_completion_signal":true,"completion_target":"面试","has_correction_intent":true,"correction_action":"correct","correction_query":"旧面试时间","correction_new_value":"周五下午面试","primary_emotion":"焦虑","secondary_emotion":null,"valence":"vulnerable","is_casual_chat":false,"has_followup_invitation":false,"topics":["面试"],"unfinished_items":["准备面试材料"],"information_density":2.2}',
             provider="fake",
             model="fake",
             degraded=False,
@@ -297,6 +297,9 @@ def test_structured_llm_intent_classifier_maps_json() -> None:
 
     assert intent["classifier"] == "structured_llm_intent"
     assert intent["completion_target"] == "面试"
+    assert intent["correction_action"] == "correct"
+    assert intent["correction_query"] == "旧面试时间"
+    assert intent["correction_new_value"] == "周五下午面试"
     assert intent["topics"] == ["面试"]
     assert "当前日期" in gateway.calls[-1]["messages"][1]["content"]
 
@@ -423,6 +426,41 @@ def test_memory_upsert_merges_similar_preferences() -> None:
     preferences = [memory for memory in existing if memory["type"] == "preference"]
     assert len(preferences) == 1
     assert preferences[0]["confidence"] > 0.9
+
+
+def test_intent_delete_correction_removes_matching_memory() -> None:
+    memories = []
+    upsert_memories(memories, extract_memory_candidates("记住我喜欢深夜复盘"))
+
+    result = apply_user_corrections(
+        memories,
+        "这条不用保留",
+        intent={"has_correction_intent": True, "correction_action": "delete", "correction_query": "深夜复盘"},
+    )
+
+    assert result["deleted"]
+    assert result["deleted"][0]["status"] == "deleted_by_user"
+
+
+def test_intent_correct_correction_replaces_matching_memory() -> None:
+    memories = []
+    upsert_memories(memories, extract_memory_candidates("记住我喜欢深夜复盘"))
+
+    result = apply_user_corrections(
+        memories,
+        "我刚才说法不准确",
+        intent={
+            "has_correction_intent": True,
+            "correction_action": "correct",
+            "correction_query": "深夜复盘",
+            "correction_new_value": "我喜欢早上复盘",
+        },
+    )
+
+    assert result["corrected"]
+    assert result["corrected"][0]["status"] == "corrected"
+    assert result["created"]
+    assert "早上复盘" in result["created"][0]["content"]
 
 
 def test_memory_tidy_archives_duplicate_fact_and_normalizes_rules() -> None:

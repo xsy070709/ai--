@@ -9,19 +9,23 @@ from .signals import has_correction_signal, has_deletion_signal
 from .text import canonical_content, infer_type, normalize_content, tokens, valence_from_text
 
 
-def apply_user_corrections(memories: list[dict[str, Any]], user_text: str) -> dict[str, Any]:
-    if not has_correction_signal(user_text):
+def apply_user_corrections(
+    memories: list[dict[str, Any]],
+    user_text: str,
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not _has_correction_signal(user_text, intent):
         return {"corrected": [], "deleted": [], "created": []}
 
-    deleted = _delete_requested(memories, user_text)
-    corrected, created = _correct_not_but(memories, user_text)
+    deleted = _delete_requested(memories, user_text, intent)
+    corrected, created = _correct_not_but(memories, user_text, intent)
     return {"corrected": corrected, "deleted": deleted, "created": created}
 
 
-def _delete_requested(memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
-    if not has_deletion_signal(user_text):
+def _delete_requested(memories: list[dict[str, Any]], user_text: str, intent: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    if not has_deletion_signal(user_text) and _correction_action(intent) != "delete":
         return []
-    query = _correction_query(user_text)
+    query = _intent_text(intent, "correction_query") or _correction_query(user_text)
     deleted = []
     for memory in memories:
         if memory.get("status") != "active":
@@ -34,13 +38,18 @@ def _delete_requested(memories: list[dict[str, Any]], user_text: str) -> list[di
     return deleted
 
 
-def _correct_not_but(memories: list[dict[str, Any]], user_text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _correct_not_but(
+    memories: list[dict[str, Any]],
+    user_text: str,
+    intent: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     match = re.search(r"不是([^，。！？.!?]{1,40})(?:，|,|而是|是)([^。！？.!?]{1,60})", user_text)
-    if not match and "记错" not in user_text and "改成" not in user_text and "其实是" not in user_text:
+    intent_can_correct = _correction_action(intent) == "correct" and _intent_text(intent, "correction_new_value")
+    if not match and "记错" not in user_text and "改成" not in user_text and "其实是" not in user_text and not intent_can_correct:
         return [], []
 
-    old_raw = match.group(1).strip() if match else _correction_query(user_text)
-    new_raw = match.group(2).strip() if match else _new_value(user_text)
+    old_raw = match.group(1).strip() if match else (_intent_text(intent, "correction_query") or _correction_query(user_text))
+    new_raw = match.group(2).strip() if match else (_intent_text(intent, "correction_new_value") or _new_value(user_text))
     corrected = []
     created = []
 
@@ -94,3 +103,19 @@ def _new_value(user_text: str) -> str:
         if marker in user_text:
             return user_text.split(marker, 1)[1].strip("，, 。.!！")
     return ""
+
+
+def _has_correction_signal(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    return has_correction_signal(user_text) or bool(intent and intent.get("has_correction_intent"))
+
+
+def _correction_action(intent: dict[str, Any] | None) -> str | None:
+    action = str((intent or {}).get("correction_action") or "").strip().lower()
+    if action in {"delete", "correct"}:
+        return action
+    return None
+
+
+def _intent_text(intent: dict[str, Any] | None, key: str) -> str:
+    value = (intent or {}).get(key)
+    return str(value).strip() if value else ""
