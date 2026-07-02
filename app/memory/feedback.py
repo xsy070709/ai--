@@ -19,14 +19,15 @@ def infer_feedback_signals(
 ) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     current_manifest = current_manifest or {}
+    intent = current_manifest.get("intent") or {}
     previous_manifest = (previous_log or {}).get("prompt_manifest", {})
 
     if previous_manifest.get("followup_mode") in {"gentle_follow_up", "user_invited_follow_up"}:
-        if has_completion_signal(user_text):
+        if _has_completion_signal(user_text, intent):
             signals.append(_signal("followup_resolved", "用户在跟进后汇报事项完成", ["recall.open_item_bonus"]))
-        elif is_high_density(user_text) or _topic_continues(user_text, previous_manifest):
+        elif _is_high_density(user_text, intent) or _topic_continues(user_text, previous_manifest, intent):
             signals.append(_signal("followup_engaged", "用户在跟进后继续回应相关话题", ["recall.open_item_bonus"]))
-        elif _topic_shifted(user_text, previous_manifest):
+        elif _topic_shifted(user_text, previous_manifest, intent):
             signals.append(_signal("followup_topic_shift", "用户在跟进后转移话题", ["recall.open_item_bonus", "recall.cooldown_penalty"]))
 
     if current_manifest.get("corrected_memory_ids") or current_manifest.get("deleted_memory_ids"):
@@ -35,7 +36,7 @@ def infer_feedback_signals(
         signals.append(_signal("confirmation_requested", "本轮产生了需要用户确认的记忆", ["quality.auto_accept_min_confidence"]))
     if current_manifest.get("closed_memory_ids"):
         signals.append(_signal("open_loop_closed", "待跟进事项被关闭", ["recall.open_item_bonus"]))
-    if "还记得" in user_text or "上次" in user_text or "之前" in user_text:
+    if _has_followup_invitation(user_text, intent):
         signals.append(_signal("user_invited_recall", "用户主动邀请回忆旧事", ["maintenance.cooldown_use_threshold", "recall.cooldown_penalty"]))
 
     audit_status = current_manifest.get("memory_audit_status")
@@ -43,9 +44,9 @@ def infer_feedback_signals(
         signals.append(_signal("memory_surface_issue", "记忆表露审计发现问题", ["disclosure.mention_recall_threshold"]))
 
     if previous_manifest.get("disclosure_mode") == "can_mention":
-        if looks_like_casual_chat(user_text) or _topic_shifted(user_text, previous_manifest):
+        if _looks_like_casual_chat(user_text, intent) or _topic_shifted(user_text, previous_manifest, intent):
             signals.append(_signal("disclosure_not_engaged", "AI 表露记忆后用户没有接续相关话题", ["disclosure.mention_recall_threshold"]))
-        elif is_high_density(user_text):
+        elif _is_high_density(user_text, intent):
             signals.append(_signal("disclosure_engaged", "AI 表露记忆后用户继续深入回应", ["disclosure.mention_recall_threshold"]))
 
     return _dedupe_signals(signals)
@@ -117,21 +118,47 @@ def _signal(signal_type: str, reason: str, parameters: list[str]) -> dict[str, A
     return {"type": signal_type, "reason": reason, "parameters": parameters}
 
 
-def _topic_continues(user_text: str, manifest: dict[str, Any]) -> bool:
+def _topic_continues(user_text: str, manifest: dict[str, Any], intent: dict[str, Any] | None = None) -> bool:
     reasons = " ".join(str(value) for value in manifest.get("used_memory_reasons", {}).values())
     if has_time_signal(user_text) or has_task_signal(user_text):
         return True
-    user_topics = set(topics_from_text(user_text))
+    intent_topics = {str(topic) for topic in (intent or {}).get("topics", [])}
+    user_topics = intent_topics or set(topics_from_text(user_text))
     reason_topics = set(topics_from_text(reasons))
     return user_topics != {"日常聊天"} and bool(user_topics & reason_topics)
 
 
-def _topic_shifted(user_text: str, manifest: dict[str, Any]) -> bool:
-    if looks_like_casual_chat(user_text):
+def _topic_shifted(user_text: str, manifest: dict[str, Any], intent: dict[str, Any] | None = None) -> bool:
+    if _looks_like_casual_chat(user_text, intent):
         return True
-    if is_high_density(user_text):
+    if _is_high_density(user_text, intent):
         return False
-    return not _topic_continues(user_text, manifest)
+    return not _topic_continues(user_text, manifest, intent)
+
+
+def _has_completion_signal(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    return has_completion_signal(user_text) or bool(intent and intent.get("has_completion_signal"))
+
+
+def _has_followup_invitation(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    return bool(intent and intent.get("has_followup_invitation")) or "还记得" in user_text or "上次" in user_text or "之前" in user_text
+
+
+def _is_high_density(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    if intent and float(intent.get("information_density") or 0.0) >= PARAMS.conversation.high_density_threshold:
+        return True
+    return is_high_density(user_text)
+
+
+def _looks_like_casual_chat(user_text: str, intent: dict[str, Any] | None = None) -> bool:
+    if intent:
+        if intent.get("has_completion_signal") or intent.get("has_correction_intent") or intent.get("has_followup_invitation"):
+            return False
+        if _is_high_density(user_text, intent):
+            return False
+        if "is_casual_chat" in intent:
+            return bool(intent["is_casual_chat"])
+    return looks_like_casual_chat(user_text)
 
 
 def _dedupe_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:

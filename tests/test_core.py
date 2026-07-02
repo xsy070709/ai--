@@ -193,6 +193,34 @@ def test_feedback_signals_detect_followup_engagement_and_corrections() -> None:
     assert "memory_correction" in signal_types
 
 
+def test_feedback_signals_use_intent_completion() -> None:
+    previous_log = {"prompt_manifest": {"followup_mode": "gentle_follow_up", "used_memory_reasons": {"mem_1": "待跟进"}}}
+    current_manifest = {"intent": {"has_completion_signal": True, "information_density": 0.0}}
+
+    signals = infer_feedback_signals("材料递上去了", previous_log=previous_log, current_manifest=current_manifest)
+    signal_types = {signal["type"] for signal in signals}
+
+    assert "followup_resolved" in signal_types
+
+
+def test_feedback_signals_use_intent_invitation_and_density() -> None:
+    previous_log = {"prompt_manifest": {"disclosure_mode": "can_mention", "used_memory_reasons": {"mem_1": "语义近似"}}}
+    current_manifest = {
+        "intent": {
+            "has_followup_invitation": True,
+            "is_casual_chat": True,
+            "information_density": 2.3,
+        }
+    }
+
+    signals = infer_feedback_signals("那个", previous_log=previous_log, current_manifest=current_manifest)
+    signal_types = {signal["type"] for signal in signals}
+
+    assert "user_invited_recall" in signal_types
+    assert "disclosure_engaged" in signal_types
+    assert "disclosure_not_engaged" not in signal_types
+
+
 def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     report = analyze_feedback(
         [
