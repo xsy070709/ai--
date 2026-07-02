@@ -19,13 +19,18 @@ def work_memory(messages: list[dict[str, Any]], user_text: str = "", limit: int 
     return [{"role": item["role"], "content": item["content"]} for item in recent]
 
 
-def build_session_summary(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+def build_session_summary(messages: list[dict[str, Any]], after_message_count: int = 0) -> dict[str, Any] | None:
     if len(messages) < PARAMS.topic_shift_min_messages:
         return None
 
-    window = min(len(messages), PARAMS.min_summary_messages)
-    recent = messages[-window:]
-    user_lines = [m["content"] for m in recent if m["role"] == "user"]
+    segment = messages[max(0, after_message_count) :]
+    if not segment:
+        return None
+    summary_messages = _previous_topic_messages(segment) if _has_topic_shift(segment) else []
+    if not summary_messages:
+        window = min(len(segment), PARAMS.min_summary_messages)
+        summary_messages = segment[-window:]
+    user_lines = [m["content"] for m in summary_messages if m["role"] == "user"]
     joined = " ".join(user_lines)
     open_items = unfinished_items(joined)
     emotions = emotion_tags(joined)
@@ -34,6 +39,7 @@ def build_session_summary(messages: list[dict[str, Any]]) -> dict[str, Any] | No
         "id": new_id("summary"),
         "created_at": now_iso(),
         "message_count": len(messages),
+        "covered_message_count": len(summary_messages),
         "summary": _summary_sentence(user_lines, topics, emotions, open_items),
         "topics": topics,
         "user_emotion": "、".join(emotions) if emotions else "平稳",
@@ -81,6 +87,22 @@ def _has_topic_shift(messages: list[dict[str, Any]]) -> bool:
     if recent_topics & previous_topics:
         return False
     return semantic_similarity(previous_text, recent_text) < PARAMS.topic_shift_similarity_threshold
+
+
+def _previous_topic_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    user_count = len([message for message in messages if message.get("role") == "user"])
+    if user_count < 4:
+        return []
+    recent_topic_first_user = user_count - 2
+    seen_users = 0
+    previous: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "user":
+            if seen_users >= recent_topic_first_user:
+                break
+            seen_users += 1
+        previous.append(message)
+    return previous
 
 
 def _summary_sentence(user_lines: list[str], topics: list[str], emotions: list[str], open_items: list[str]) -> str:

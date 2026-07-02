@@ -157,7 +157,8 @@ class ChatService:
             active_session["messages"].extend([user_message, assistant_message])
             active_session["updated_at"] = now_iso()
             summaries = active_session.setdefault("summaries", [])
-            summary = build_session_summary(active_session["messages"])
+            last_summary_count = int(summaries[-1].get("message_count", 0)) if summaries else 0
+            summary = build_session_summary(active_session["messages"], after_message_count=last_summary_count)
             if summary and should_build_session_summary(active_session["messages"], summaries):
                 active_session.setdefault("summaries", []).append(summary)
             current_memories = next_state.setdefault("memories", [])

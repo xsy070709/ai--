@@ -17,6 +17,7 @@ from app.memory import (
     analyze_feedback,
     build_memory_context,
     build_logical_turn,
+    build_session_summary,
     close_resolved_open_loops,
     extract_memory_candidates,
     evaluate_calibration_cases,
@@ -939,6 +940,58 @@ def test_topic_shift_can_trigger_summary_before_fixed_interval() -> None:
     ]
 
     assert should_build_session_summary(messages, []) is True
+
+
+def test_topic_shift_summary_covers_previous_topic_only() -> None:
+    messages = [
+        {"role": "user", "content": "项目推进有点卡"},
+        {"role": "assistant", "content": "先拆一下。"},
+        {"role": "user", "content": "项目材料还没整理"},
+        {"role": "assistant", "content": "我们列清单。"},
+        {"role": "user", "content": "项目今天继续做"},
+        {"role": "assistant", "content": "可以。"},
+        {"role": "user", "content": "明天面试有点紧张"},
+        {"role": "assistant", "content": "先稳住。"},
+        {"role": "user", "content": "面试还要准备自我介绍"},
+        {"role": "assistant", "content": "我们先写一版。"},
+    ]
+
+    summary = build_session_summary(messages)
+
+    assert summary is not None
+    assert "项目材料还没整理" in summary["summary"]
+    assert "面试还要准备自我介绍" not in summary["summary"]
+    assert summary["covered_message_count"] == 6
+
+
+def test_summary_after_existing_summary_starts_from_last_boundary() -> None:
+    messages = []
+    for index in range(8):
+        messages.extend(
+            [
+                {"role": "user", "content": f"学习计划第{index}步"},
+                {"role": "assistant", "content": "继续。"},
+            ]
+        )
+    messages.extend(
+        [
+            {"role": "user", "content": "项目材料有点卡"},
+            {"role": "assistant", "content": "先拆。"},
+            {"role": "user", "content": "项目今天继续推进"},
+            {"role": "assistant", "content": "好。"},
+            {"role": "user", "content": "明天面试有点紧张"},
+            {"role": "assistant", "content": "先稳住。"},
+            {"role": "user", "content": "面试还要准备自我介绍"},
+            {"role": "assistant", "content": "我们写一版。"},
+        ]
+    )
+
+    summary = build_session_summary(messages, after_message_count=16)
+
+    assert summary is not None
+    assert "学习计划" not in summary["summary"]
+    assert "项目今天继续推进" in summary["summary"]
+    assert "面试还要准备自我介绍" not in summary["summary"]
 
 
 def test_same_topic_does_not_create_fixed_interval_summary() -> None:
