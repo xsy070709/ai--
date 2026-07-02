@@ -9,7 +9,18 @@ const els = {
   backgroundInput: document.querySelector("#backgroundInput"),
   importPersonaButton: document.querySelector("#importPersonaButton"),
   memoryLayers: document.querySelector("#memoryLayers"),
+  devToggle: document.querySelector("#devToggle"),
+  devDrawer: document.querySelector("#devDrawer"),
+  devBackdrop: document.querySelector("#devBackdrop"),
+  devClose: document.querySelector("#devClose"),
+  devRefresh: document.querySelector("#devRefresh"),
+  devTidy: document.querySelector("#devTidy"),
+  devContent: document.querySelector("#devContent"),
+  devTabs: document.querySelectorAll(".dev-tab"),
 };
+
+let devState = null;
+let activeDevTab = "memories";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -70,6 +81,207 @@ function renderPersona(persona) {
   els.personaBox.textContent = `${identity.name || "未命名"} · ${identity.relationship_to_user || "虚拟好友"}\n核心性格：${traits.join("、")}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function compactJson(value) {
+  return JSON.stringify(value ?? null, null, 2);
+}
+
+function memoryTitle(memory) {
+  const flags = [];
+  if (memory.status && memory.status !== "active") flags.push(memory.status);
+  if (memory.open) flags.push("open");
+  if (memory.is_user_confirmed) flags.push("confirmed");
+  return flags.length ? flags.join(" · ") : "active";
+}
+
+function renderDev() {
+  if (!devState) {
+    els.devContent.innerHTML = '<div class="dev-empty">还没有加载调试数据</div>';
+    return;
+  }
+  if (activeDevTab === "memories") renderDevMemories();
+  if (activeDevTab === "logs") renderDevLogs();
+  if (activeDevTab === "api") renderDevApi();
+  if (activeDevTab === "raw") renderDevRaw();
+}
+
+function renderDevMemories() {
+  const groups = devState.memories_by_type || {};
+  const keys = Object.keys(groups).sort();
+  if (!keys.length) {
+    els.devContent.innerHTML = '<div class="dev-empty">暂无长期记忆</div>';
+    return;
+  }
+  els.devContent.innerHTML = keys
+    .map((type) => {
+      const items = groups[type] || [];
+      return `
+        <section class="dev-section">
+          <h3>${escapeHtml(type)} <span>${items.length}</span></h3>
+          ${items
+            .map(
+              (memory) => `
+                <article class="dev-card">
+                  <div class="dev-card-head">
+                    <strong>${escapeHtml(memory.content)}</strong>
+                    <span>${escapeHtml(memoryTitle(memory))}</span>
+                  </div>
+                  <div class="dev-kv">
+                    <span>importance ${escapeHtml(memory.importance)}</span>
+                    <span>confidence ${escapeHtml(memory.confidence)}</span>
+                    <span>policy ${escapeHtml(memory.surface_policy)}</span>
+                  </div>
+                  <details>
+                    <summary>完整 JSON</summary>
+                    <pre>${escapeHtml(compactJson(memory))}</pre>
+                  </details>
+                </article>`
+            )
+            .join("")}
+        </section>`;
+    })
+    .join("");
+}
+
+function renderDevLogs() {
+  const logs = [...(devState.generation_logs || [])].reverse();
+  if (!logs.length) {
+    els.devContent.innerHTML = '<div class="dev-empty">暂无 generation logs</div>';
+    return;
+  }
+  els.devContent.innerHTML = logs
+    .map(
+      (log) => `
+        <article class="dev-card">
+          <div class="dev-card-head">
+            <strong>${escapeHtml(log.purpose)} · ${escapeHtml(log.model)}</strong>
+            <span>${escapeHtml(log.elapsed_ms)}ms</span>
+          </div>
+          <div class="dev-kv">
+            <span>${escapeHtml(log.created_at)}</span>
+            <span>${escapeHtml(log.provider)}</span>
+            <span>${log.degraded ? "degraded" : "ok"}</span>
+            <span>audit ${escapeHtml(log.prompt_manifest?.memory_audit_status)}</span>
+          </div>
+          <details open>
+            <summary>发给聊天 API 的 messages</summary>
+            <pre>${escapeHtml(compactJson(log.api_messages || []))}</pre>
+          </details>
+          <details>
+            <summary>prompt manifest</summary>
+            <pre>${escapeHtml(compactJson(log.prompt_manifest))}</pre>
+          </details>
+          <details>
+            <summary>usage / feedback</summary>
+            <pre>${escapeHtml(compactJson({ usage: log.usage, feedback_signals: log.feedback_signals, error: log.error }))}</pre>
+          </details>
+        </article>`
+    )
+    .join("");
+}
+
+function renderDevApi() {
+  const requests = [...(devState.api_requests || [])].reverse();
+  if (!requests.length) {
+    els.devContent.innerHTML = '<div class="dev-empty">本次进程暂无 DeepSeek 请求日志</div>';
+    return;
+  }
+  els.devContent.innerHTML = requests
+    .map(
+      (request) => `
+        <article class="dev-card">
+          <div class="dev-card-head">
+            <strong>${escapeHtml(request.purpose)} · ${escapeHtml(request.model)}</strong>
+            <span>${escapeHtml(request.elapsed_ms)}ms</span>
+          </div>
+          <div class="dev-kv">
+            <span>${escapeHtml(request.created_at)}</span>
+            <span>${request.degraded ? "degraded" : "ok"}</span>
+            <span>${request.client_cache_hit ? "client cache hit" : "network/local"}</span>
+          </div>
+          <details open>
+            <summary>request messages</summary>
+            <pre>${escapeHtml(compactJson(request.messages || []))}</pre>
+          </details>
+          <details>
+            <summary>request options / usage</summary>
+            <pre>${escapeHtml(compactJson({
+              thinking: request.thinking,
+              response_format: request.response_format,
+              max_tokens: request.max_tokens,
+              usage: request.usage,
+              error: request.error,
+            }))}</pre>
+          </details>
+        </article>`
+    )
+    .join("");
+}
+
+function renderDevRaw() {
+  const raw = devState.raw_flow || {};
+  const latest = raw.latest_chat || {};
+  els.devContent.innerHTML = `
+    <section class="dev-section">
+      <h3>最新聊天原始流 <span>${escapeHtml(latest.note || "暂无聊天")}</span></h3>
+      <article class="dev-card">
+        <div class="dev-card-head">
+          <strong>真正发给 chat API 的 messages</strong>
+          <span>${escapeHtml((latest.chat_api_messages || []).length)} messages</span>
+        </div>
+        <pre>${escapeHtml(compactJson(latest.chat_api_messages || []))}</pre>
+      </article>
+      <article class="dev-card">
+        <div class="dev-card-head">
+          <strong>同一服务进程最近 DeepSeek 请求/响应</strong>
+          <span>${escapeHtml((latest.nearby_api_requests || []).length)} requests</span>
+        </div>
+        <pre>${escapeHtml(compactJson(latest.nearby_api_requests || []))}</pre>
+      </article>
+      <article class="dev-card">
+        <div class="dev-card-head">
+          <strong>持久化 generation log</strong>
+          <span>prompt_manifest 是审计，不是完整 prompt</span>
+        </div>
+        <pre>${escapeHtml(compactJson(latest.chat_generation_log || {}))}</pre>
+      </article>
+    </section>
+    <section class="dev-section">
+      <h3>完整 raw_flow <span>debug JSON</span></h3>
+      <article class="dev-card">
+        <pre>${escapeHtml(compactJson(raw))}</pre>
+      </article>
+    </section>`;
+}
+
+async function refreshDev() {
+  devState = await api("/api/debug");
+  renderDev();
+}
+
+function openDev() {
+  els.devDrawer.classList.add("open");
+  els.devBackdrop.classList.add("open");
+  els.devDrawer.setAttribute("aria-hidden", "false");
+  refreshDev().catch((error) => {
+    els.devContent.innerHTML = `<div class="dev-empty">加载失败：${escapeHtml(error.message)}</div>`;
+  });
+}
+
+function closeDev() {
+  els.devDrawer.classList.remove("open");
+  els.devBackdrop.classList.remove("open");
+  els.devDrawer.setAttribute("aria-hidden", "true");
+}
+
 async function refresh() {
   const [status, messages] = await Promise.all([api("/api/status"), api("/api/messages")]);
   els.modelName.textContent = status.llm.model;
@@ -112,10 +324,36 @@ els.composer.addEventListener("submit", async (event) => {
     });
     els.debug.textContent = `${result.llm.provider}/${result.llm.model} · ${result.llm.elapsed_ms}ms${result.degraded ? " · 降级" : ""}`;
     await refresh();
+    if (els.devDrawer.classList.contains("open")) await refreshDev();
   } catch (error) {
     els.debug.textContent = `发送失败：${error.message}`;
   }
 });
+
+els.devToggle.addEventListener("click", openDev);
+els.devClose.addEventListener("click", closeDev);
+els.devBackdrop.addEventListener("click", closeDev);
+els.devRefresh.addEventListener("click", () => refreshDev());
+els.devTidy.addEventListener("click", async () => {
+  els.devTidy.disabled = true;
+  els.devTidy.textContent = "整理中";
+  try {
+    const report = await api("/api/memories/tidy", { method: "POST", body: "{}" });
+    await refresh();
+    await refreshDev();
+    els.debug.textContent = `整理完成：规范 ${report.normalized.length}，合并 ${report.merged.length}，归档 ${report.archived.length}`;
+  } finally {
+    els.devTidy.disabled = false;
+    els.devTidy.textContent = "整理记忆";
+  }
+});
+for (const tab of els.devTabs) {
+  tab.addEventListener("click", () => {
+    activeDevTab = tab.dataset.tab;
+    for (const item of els.devTabs) item.classList.toggle("active", item === tab);
+    renderDev();
+  });
+}
 
 els.input.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

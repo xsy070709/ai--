@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from ..time_context import current_time_context
 from .extraction import extract_memory_candidates as rule_based_extract
 from .schema import make_memory
 from .text import valence_from_text
@@ -88,6 +89,7 @@ def _build_messages(user_text: str, assistant_text: str, context: dict[str, Any]
     profile_text = ""
     if context and context.get("memory_context"):
         profile_text = context["memory_context"].get("prompt_text", "")
+    time_context = current_time_context()
     schema = """
 返回严格 JSON：
 {
@@ -106,7 +108,7 @@ def _build_messages(user_text: str, assistant_text: str, context: dict[str, Any]
 只抽取对长期相处有用的记忆；不要把普通寒暄写成记忆；不要编造。
 """
     return [
-        {"role": "system", "content": "你是记忆抽取器，只输出 JSON，不输出解释。"},
+        {"role": "system", "content": f"你是记忆抽取器，只输出 JSON，不输出解释。\n{time_context['prompt_text']}"},
         {"role": "user", "content": f"{schema}\n已有记忆上下文：\n{profile_text}\n用户消息：{user_text}\nAI 回复：{assistant_text}"},
     ]
 

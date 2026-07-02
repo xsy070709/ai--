@@ -44,7 +44,10 @@
             <h2>长期聊天窗口</h2>
             <p>背景设定、人格记忆和长期记忆会参与回复编排</p>
           </div>
-          <div id="debugMeta" class="debug-meta">等待消息</div>
+          <div class="topbar-actions">
+            <div id="debugMeta" class="debug-meta">等待消息</div>
+            <button id="devToggle" class="secondary" type="button">开发窗口</button>
+          </div>
         </header>
 
         <section id="messages" class="messages" aria-live="polite"></section>
@@ -55,6 +58,28 @@
         </form>
       </main>
     </div>
+
+    <aside id="devDrawer" class="dev-drawer" aria-hidden="true">
+      <header class="dev-header">
+        <div>
+          <h2>开发窗口</h2>
+          <p>记忆明细与 API 请求日志</p>
+        </div>
+        <div class="dev-actions">
+          <button id="devTidy" class="secondary" type="button">整理记忆</button>
+          <button id="devRefresh" class="secondary" type="button">刷新</button>
+          <button id="devClose" class="icon-button" type="button" aria-label="关闭开发窗口">×</button>
+        </div>
+      </header>
+      <nav class="dev-tabs" aria-label="开发窗口视图">
+        <button class="dev-tab active" type="button" data-tab="memories">记忆</button>
+        <button class="dev-tab" type="button" data-tab="logs">日志</button>
+        <button class="dev-tab" type="button" data-tab="api">API</button>
+        <button class="dev-tab" type="button" data-tab="raw">原始流</button>
+      </nav>
+      <section id="devContent" class="dev-content"></section>
+    </aside>
+    <div id="devBackdrop" class="dev-backdrop"></div>
 
     <script src="/static/app.js"></script>
   </body>

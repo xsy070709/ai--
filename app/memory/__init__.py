@@ -9,6 +9,7 @@ from .followup import build_followup_plan, close_resolved_open_loops, format_fol
 from .initiative import build_disclosure_plan, format_disclosure_plan
 from .intent import IntentClassifier, RuleBasedIntentClassifier, StructuredLLMIntentClassifier, choose_intent_classifier
 from .lifecycle import mark_recalled, upsert_memories
+from .hygiene import tidy_memories
 from .maintenance import maintain_memories
 from .params import DEFAULT_MEMORY_PARAMS, DEFAULT_MEMORY_PROFILE, PARAMETER_DESCRIPTIONS, MemoryParams, memory_params_for_profile, memory_params_from_file
 from .profile import build_user_profile
@@ -56,6 +57,7 @@ __all__ = [
     "format_disclosure_plan",
     "format_memory_context",
     "mark_recalled",
+    "tidy_memories",
     "maintain_memories",
     "memory_layers",
     "pending_confirmations",

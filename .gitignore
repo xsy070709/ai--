@@ -5,3 +5,7 @@ __pycache__/
 data/*.json
 !data/memory_calibration_cases.json
 data/*.json.tmp
+dev_server.err.log
+dev_server.jobid
+dev_server.out.log
+dev_server.pid

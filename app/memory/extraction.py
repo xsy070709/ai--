@@ -5,7 +5,7 @@ from typing import Any
 
 from .schema import make_memory
 from .signals import has_task_signal, has_time_signal, information_density, is_high_density
-from .text import clean_text, emotion_cause, emotion_tags, infer_type, normalize_content, valence_from_text
+from .text import clean_text, emotion_cause, emotion_tags, first_sentence, infer_type, normalize_content, valence_from_text
 
 
 def extract_memory_candidates(user_text: str, assistant_text: str = "") -> list[dict[str, Any]]:
@@ -26,7 +26,7 @@ def extract_memory_candidates(user_text: str, assistant_text: str = "") -> list[
 def _extract_explicit_memory(text: str) -> list[dict[str, Any]]:
     candidates = []
     for match in re.finditer(r"(?:记住|帮我记住|你要记得)[：:，, ]*(.+)", text):
-        content = match.group(1).strip("。.!！ ")
+        content = first_sentence(match.group(1)).strip("。.!！ ")
         memory_type = infer_type(content)
         candidates.append(
             make_memory(
@@ -71,7 +71,7 @@ def _extract_response_rules(text: str) -> list[dict[str, Any]]:
     candidates = []
     rule_patterns = [
         r"(?:以后|下次|和我聊天时)(?:尽量|最好|要)?([^。！？.!?]{1,60})",
-        r"(?:别|不要)([^。！？.!?]{1,60})",
+        r"((?:别|不要)[^。！？.!?]{1,60})",
     ]
     for pattern in rule_patterns:
         for match in re.finditer(pattern, text):
@@ -122,13 +122,16 @@ def _extract_goals_and_tasks(text: str) -> list[dict[str, Any]]:
 
 def _extract_emotion_patterns(text: str) -> list[dict[str, Any]]:
     emotions = emotion_tags(text)
+    if emotions == ["烦躁"] and "麻烦" in text and not any(word in text for word in ["烦躁", "烦死", "烦人", "生气", "火大", "崩溃", "破防"]):
+        return []
     if not emotions:
         return []
     cause = emotion_cause(text)
+    suffix = "中" if cause == "当前情境" else "相关情境中"
     return [
         make_memory(
             "emotion_pattern",
-            f"用户在{cause}相关情境中容易感到{'、'.join(emotions)}",
+            f"用户在{cause}{suffix}容易感到{'、'.join(emotions)}",
             0.68,
             False,
             text,

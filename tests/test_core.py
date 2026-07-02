@@ -4,7 +4,7 @@ import asyncio
 
 from app.chat_service import ChatService
 from app.config import Settings
-from app.llm_gateway import DeepSeekGateway
+from app.llm_gateway import DeepSeekGateway, LLMResult
 from app.memory import (
     DEFAULT_MEMORY_PARAMS,
     PARAMETER_DESCRIPTIONS,
@@ -27,6 +27,7 @@ from app.memory import (
     memory_params_from_file,
     relevant_memories,
     review_memory_candidates,
+    tidy_memories,
     upsert_memories,
 )
 from app.memory.initiative import build_disclosure_plan
@@ -44,9 +45,13 @@ class FakeStructuredGateway:
 
     settings = Settings()
 
+    def __init__(self) -> None:
+        self.calls = []
+
     async def structured(self, messages, purpose="structured"):
         from app.llm_gateway import LLMResult
 
+        self.calls.append({"purpose": purpose, "messages": messages})
         return LLMResult(
             text='{"memories":[{"type":"preference","content":"用户喜欢先被安慰再分析","confidence":0.86,"confirmed":false,"open":false,"stability":"high","sensitivity_level":"low"}]}',
             provider="fake",
@@ -60,6 +65,7 @@ class FakeIntentGateway(FakeStructuredGateway):
     async def structured(self, messages, purpose="structured"):
         from app.llm_gateway import LLMResult
 
+        self.calls.append({"purpose": purpose, "messages": messages})
         return LLMResult(
             text='{"has_completion_signal":true,"completion_target":"面试","has_correction_intent":false,"primary_emotion":"焦虑","secondary_emotion":null,"valence":"vulnerable","is_casual_chat":false,"has_followup_invitation":false,"topics":["面试"],"unfinished_items":["准备面试材料"],"information_density":2.2}',
             provider="fake",
@@ -83,6 +89,55 @@ def test_initialize_persona_from_background() -> None:
     assert "长期陪伴型虚拟好友" in persona["identity"]["relationship_to_user"]
     assert "温柔" in persona["personality"]["stable_traits"]
     assert "林夏" in persona["system_prompt"]["content"]
+
+
+def test_deepseek_gateway_uses_flash_payload_defaults(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="key",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    gateway = DeepSeekGateway(settings)
+
+    chat_payload = gateway._payload([{"role": "user", "content": "你好"}], purpose="chat", structured=False)
+    structured_payload = gateway._payload([{"role": "system", "content": "只输出 JSON"}], purpose="memory_intent", structured=True)
+
+    assert chat_payload["model"] == "deepseek-v4-flash"
+    assert chat_payload["thinking"] == {"type": "disabled"}
+    assert chat_payload["temperature"] == 0.7
+    assert structured_payload["response_format"] == {"type": "json_object"}
+    assert structured_payload["max_tokens"] == 900
+    assert "json" in structured_payload["messages"][0]["content"].lower()
+
+
+def test_deepseek_structured_client_cache_short_circuits_network(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="key",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    gateway = DeepSeekGateway(settings)
+    messages = [{"role": "system", "content": "只输出 JSON"}, {"role": "user", "content": "返回 {}"}]
+    payload = gateway._payload(messages, purpose="memory_intent", structured=True)
+    gateway._structured_cache[gateway._structured_cache_key(payload)] = LLMResult(
+        text="{}",
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        degraded=False,
+        elapsed_ms=10,
+        usage={"prompt_cache_hit_tokens": 12},
+    )
+
+    result = asyncio.run(gateway.structured(messages, purpose="memory_intent"))
+
+    assert result.text == "{}"
+    assert result.usage["client_cache_hit"] is True
 
 
 def test_memory_params_centralize_tunable_defaults() -> None:
@@ -191,6 +246,14 @@ def test_extract_explicit_memory() -> None:
     assert memories[0]["is_user_confirmed"] is True
 
 
+def test_explicit_preference_does_not_absorb_ephemeral_sentence() -> None:
+    memories = extract_memory_candidates("记住我喜欢安静一点的回复。今天有点累。")
+
+    assert memories[0]["type"] == "preference"
+    assert memories[0]["content"] == "用户喜欢或偏好安静一点的回复"
+    assert "今天有点累" not in memories[0]["content"]
+
+
 def test_rule_based_extractor_marks_source() -> None:
     extractor = RuleBasedMemoryExtractor()
     memories = extractor.extract("记住我喜欢安静一点的回复")
@@ -200,13 +263,15 @@ def test_rule_based_extractor_marks_source() -> None:
 
 
 def test_structured_llm_extractor_maps_json_to_memory() -> None:
-    extractor = StructuredLLMMemoryExtractor(FakeStructuredGateway())
+    gateway = FakeStructuredGateway()
+    extractor = StructuredLLMMemoryExtractor(gateway)
     memories = asyncio.run(extractor.extract_async("我喜欢先被安慰再分析"))
 
     assert memories
     assert memories[0]["type"] == "preference"
     assert memories[0]["extractor"] == "structured_llm"
     assert memories[0]["content"] == "用户喜欢先被安慰再分析"
+    assert "当前真实时间" in gateway.calls[-1]["messages"][0]["content"]
 
 
 def test_structured_llm_extractor_falls_back_when_degraded() -> None:
@@ -226,11 +291,13 @@ def test_rule_based_intent_classifier_extracts_high_value_signals() -> None:
 
 
 def test_structured_llm_intent_classifier_maps_json() -> None:
-    intent = asyncio.run(StructuredLLMIntentClassifier(FakeIntentGateway()).classify_async("明天面试"))
+    gateway = FakeIntentGateway()
+    intent = asyncio.run(StructuredLLMIntentClassifier(gateway).classify_async("明天面试"))
 
     assert intent["classifier"] == "structured_llm_intent"
     assert intent["completion_target"] == "面试"
     assert intent["topics"] == ["面试"]
+    assert "当前真实时间" in gateway.calls[-1]["messages"][0]["content"]
 
 
 def test_structured_llm_intent_classifier_falls_back_when_degraded() -> None:
@@ -322,6 +389,26 @@ def test_memory_upsert_merges_similar_preferences() -> None:
     preferences = [memory for memory in existing if memory["type"] == "preference"]
     assert len(preferences) == 1
     assert preferences[0]["confidence"] > 0.9
+
+
+def test_memory_tidy_archives_duplicate_fact_and_normalizes_rules() -> None:
+    memories = [
+        make_memory("fact", "我喜欢安静一点的回复。今天有点累", 0.9, True, "old"),
+        make_memory("preference", "用户喜欢安静一点的回复。今天有点累；用户喜欢或偏好安静一点的回复", 0.8, True, "old"),
+        make_memory("preference", "用户喜欢或偏好你先安慰我", 0.8, True, "old"),
+        make_memory("response_rule", "和用户互动时上来就讲大道理，我更希望你先安慰我", 0.8, True, "old"),
+        make_memory("response_rule", "别上来就讲大道理，我更希望你先安慰我", 0.8, True, "old"),
+        make_memory("emotion_pattern", "用户在类似情境相关情境中容易感到烦躁", 0.7, False, "old"),
+    ]
+
+    report = tidy_memories(memories)
+    active = [memory for memory in memories if memory["status"] == "active"]
+
+    assert any(item["type"] == "fact" for item in report["archived"])
+    assert len([memory for memory in active if memory["type"] == "response_rule"]) == 1
+    assert any(memory["content"] == "用户喜欢安静一点的回复" for memory in active)
+    assert not any(memory["content"] == "用户喜欢或偏好你先安慰我" for memory in active)
+    assert not any(memory["content"] == "用户在当前情境中容易感到烦躁" for memory in active)
 
 
 def test_memory_context_prioritizes_open_and_emotional_recall() -> None:
@@ -550,6 +637,9 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     assert service.messages()[-1]["role"] == "assistant"
     assert service.status()["layers"]["persona"]["count"] == 1
     assert service.status()["profile"]["preferences"]
+    logs = service.store.snapshot()["generation_logs"]
+    assert "当前真实时间" in logs[-1]["api_messages"][0]["content"]
+    assert logs[-1]["prompt_manifest"]["time_context"]["date"]
 
 
 def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:

@@ -22,12 +22,14 @@ from .memory import (
     pending_confirmations,
     review_memory_candidates,
     should_build_session_summary,
+    tidy_memories,
     upsert_memories,
     work_memory,
     DEFAULT_MEMORY_PROFILE,
 )
 from .persona import active_persona_text, initialize_persona
 from .storage import StorageBackend, new_id, now_iso
+from .time_context import current_time_context
 
 
 class ChatService:
@@ -52,6 +54,7 @@ class ChatService:
                 "model": self.gateway.settings.deepseek_chat_model,
             },
             "memory_params": {"profile": DEFAULT_MEMORY_PROFILE},
+            "time": current_time_context(),
         }
 
     def messages(self) -> list[dict[str, Any]]:
@@ -63,6 +66,32 @@ class ChatService:
 
     def memory_confirmations(self) -> list[dict[str, Any]]:
         return pending_confirmations(self.store.snapshot())
+
+    def debug_snapshot(self) -> dict[str, Any]:
+        state = self.store.snapshot()
+        memories = state.get("memories", [])
+        grouped_memories: dict[str, list[dict[str, Any]]] = {}
+        for memory in memories:
+            grouped_memories.setdefault(memory.get("type", "unknown"), []).append(memory)
+        session = state["sessions"][state["active_session_id"]]
+        generation_logs = state.get("generation_logs", [])[-80:]
+        api_requests = self.gateway.debug_requests()
+        return {
+            "session": {
+                "id": session.get("id"),
+                "title": session.get("title"),
+                "message_count": len(session.get("messages", [])),
+                "summary_count": len(session.get("summaries", [])),
+                "summaries": session.get("summaries", []),
+            },
+            "memories": memories,
+            "memories_by_type": grouped_memories,
+            "memory_confirmations": pending_confirmations(state),
+            "generation_logs": generation_logs,
+            "api_requests": api_requests,
+            "raw_flow": self._debug_raw_flow(session, memories, generation_logs, api_requests),
+            "status": self.status(),
+        }
 
     def import_background(self, text: str, confirm: bool = True) -> dict[str, Any]:
         persona = initialize_persona(text)
@@ -103,7 +132,8 @@ class ChatService:
         intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
-        model_messages = self._build_prompt(session.get("messages", []), persona, memory_context, user_text)
+        time_context = current_time_context()
+        model_messages = self._build_prompt(session.get("messages", []), persona, memory_context, user_text, time_context)
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
         assistant_message = {
@@ -165,6 +195,7 @@ class ChatService:
                 "intent_classifier": intent.get("classifier", getattr(self.intent_classifier, "name", "unknown")),
                 "intent": intent,
                 "has_persona": persona is not None,
+                "time_context": time_context,
             }
             previous_log = next_state.get("generation_logs", [])[-1] if next_state.get("generation_logs") else None
             feedback_signals = infer_feedback_signals(memory_user_text, previous_log=previous_log, current_manifest=prompt_manifest)
@@ -179,6 +210,7 @@ class ChatService:
                     "elapsed_ms": result.elapsed_ms,
                     "error": result.error,
                     "usage": result.usage,
+                    "api_messages": model_messages,
                     "prompt_manifest": prompt_manifest,
                     "feedback_signals": feedback_signals,
                 }
@@ -200,7 +232,7 @@ class ChatService:
             "intent": intent,
             "logical_turn": logical_turn,
             "degraded": result.degraded,
-            "llm": {"provider": result.provider, "model": result.model, "elapsed_ms": result.elapsed_ms},
+            "llm": {"provider": result.provider, "model": result.model, "elapsed_ms": result.elapsed_ms, "error": result.error, "usage": result.usage},
             "layers": updated["layers"],
         }
 
@@ -212,6 +244,12 @@ class ChatService:
                     memory["updated_at"] = now_iso()
                     return True
             return False
+
+        return self.store.mutate(mutate)
+
+    def tidy_memory_store(self) -> dict[str, Any]:
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            return tidy_memories(state.setdefault("memories", []))
 
         return self.store.mutate(mutate)
 
@@ -268,10 +306,13 @@ class ChatService:
         persona: dict[str, Any] | None,
         memory_context: dict[str, Any],
         user_text: str,
+        time_context: dict[str, str] | None = None,
     ) -> list[dict[str, str]]:
+        time_context = time_context or current_time_context()
         system = "\n".join(
             [
                 "你需要作为虚拟好友进行自然中文聊天。",
+                time_context["prompt_text"],
                 active_persona_text(persona),
                 "记忆系统给出的长期画像和本轮相关记忆如下。只在自然、有帮助时使用，不要机械复述。",
                 memory_context["prompt_text"],
@@ -279,3 +320,38 @@ class ChatService:
             ]
         )
         return [{"role": "system", "content": system}, *work_memory(messages, user_text), {"role": "user", "content": user_text}]
+
+    def _debug_raw_flow(
+        self,
+        session: dict[str, Any],
+        memories: list[dict[str, Any]],
+        generation_logs: list[dict[str, Any]],
+        api_requests: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "description": "Raw debug data. generation_logs are persisted. api_requests are in-process only since the latest server restart.",
+            "current_session_messages": session.get("messages", []),
+            "current_session_summaries": session.get("summaries", []),
+            "current_memories": memories,
+            "persisted_generation_logs": generation_logs,
+            "in_process_api_requests": api_requests,
+            "latest_chat": _latest_chat_flow(generation_logs, api_requests),
+        }
+
+
+def _latest_chat_flow(generation_logs: list[dict[str, Any]], api_requests: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_log = next((log for log in reversed(generation_logs) if log.get("purpose") == "chat"), None)
+    if not latest_log:
+        return {}
+    return {
+        "chat_generation_log": latest_log,
+        "chat_api_messages": latest_log.get("api_messages", []),
+        "prompt_manifest": latest_log.get("prompt_manifest", {}),
+        "feedback_signals": latest_log.get("feedback_signals", []),
+        "nearby_api_requests": [
+            request
+            for request in api_requests[-12:]
+            if request.get("purpose") in {"chat", "memory_intent", "memory_extract", "structured"}
+        ],
+        "note": "chat_api_messages is the persisted chat-completion prompt. nearby_api_requests are live process request/response records.",
+    }

@@ -9,6 +9,11 @@ def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
 
 
+def first_sentence(text: str) -> str:
+    parts = [part.strip() for part in re.split(r"[。！？.!?]", text) if part.strip()]
+    return parts[0] if parts else text.strip()
+
+
 def tokens(text: str) -> list[str]:
     return re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]+", text)
 
@@ -29,7 +34,7 @@ def emotion_cause(text: str) -> str:
     for topic in ["项目", "工作", "学习", "考试", "面试", "朋友", "家庭", "睡眠", "材料"]:
         if topic in text:
             return topic
-    return "类似情境"
+    return "当前情境"
 
 
 def unfinished_items(text: str) -> list[str]:
@@ -43,16 +48,20 @@ def unfinished_items(text: str) -> list[str]:
 def canonical_content(memory: dict) -> str:
     content = memory.get("content", "")
     content = re.sub(r"用户(?:喜欢或偏好|反感或不喜欢)", "", content)
+    content = re.sub(r"^和用户互动时", "", content)
+    content = content.replace("不要", "别")
     content = re.sub(r"^(?:我)?(?:喜欢|希望|偏好|讨厌|不喜欢)", "", content)
     content = content.replace("回复方式", "回复")
+    content = content.replace("安静一点的回复", "安静回复")
     content = re.sub(r"[，,。.!！；;\s]", "", content)
     return content
 
 
 def normalize_content(memory_type: str, raw: str) -> str:
-    raw = raw.strip("，, 。.!！")
+    raw = first_sentence(raw).strip("，, 。.!！")
     raw = re.sub(r"^(?:我)?(?:很|挺|特别|最|比较|更)?(?:喜欢|希望|偏好)", "", raw).strip("，, ")
     raw = re.sub(r"^我(?:不喜欢|讨厌|受不了)", "", raw).strip("，, ")
+    raw = re.sub(r"^你", "", raw).strip("，, ")
     if memory_type == "preference" and not raw.startswith("用户"):
         return f"用户喜欢或偏好{raw}"
     if memory_type == "dislike" and not raw.startswith("用户"):

@@ -36,10 +36,14 @@ python -m uvicorn app.main:app --reload
 
 ```text
 DEEPSEEK_API_KEY=你的 key
-DEEPSEEK_CHAT_MODEL=deepseek-v4
+DEEPSEEK_CHAT_MODEL=deepseek-v4-flash
+DEEPSEEK_STRUCTURED_MODEL=deepseek-v4-flash
+DEEPSEEK_THINKING=disabled
 ```
 
 没有 API key 时，系统会使用本地降级回复，便于验证聊天、记忆和人格初始化流程。
+
+`deepseek-v4-flash` 是当前默认低成本模型；如需更强推理可改为 `deepseek-v4-pro`，并按需把 `DEEPSEEK_THINKING=enabled`。DeepSeek 服务端上下文缓存默认开启，返回的 `usage` 会记录 `prompt_cache_hit_tokens`、`prompt_cache_miss_tokens` 和本项目补充的 `prompt_cache_hit_ratio`。
 
 结构化记忆抽取和意图分类可单独切换：
 
@@ -109,3 +113,17 @@ python scripts/evaluate_memory_calibration.py
 ```
 
 校准集位于 `data/memory_calibration_cases.json`，可继续补充“用户消息 -> 期望记忆/召回/表露模式”的标注案例。
+
+人工测试调参流程见 `docs/memory_manual_tuning.md`。人工评分样例为 `data/manual_memory_eval.example.jsonl`，本地真实评分建议写到 `data/manual_memory_eval.local.jsonl`，再运行：
+
+```powershell
+python scripts/summarize_manual_memory_eval.py data/manual_memory_eval.local.jsonl
+```
+
+运行一次真实 DeepSeek flash 用户测试：
+
+```powershell
+python scripts/run_deepseek_flash_user_test.py
+```
+
+该脚本使用临时数据目录，不会写入当前 `data/store.json`。

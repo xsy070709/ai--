@@ -36,6 +36,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(service.memories())
         if path == "/api/memory-confirmations":
             return self._send_json(service.memory_confirmations())
+        if path == "/api/debug":
+            return self._send_json(service.debug_snapshot())
         if path == "/api/llm/health":
             return self._send_json(
                 {
@@ -68,6 +70,8 @@ class Handler(BaseHTTPRequestHandler):
             confirmation_id = path.split("/")[-2]
             result = service.confirm_memory_candidate(confirmation_id, False)
             return self._send_json(result or {"detail": "confirmation not found"}, 200 if result else 404)
+        if path == "/api/memories/tidy":
+            return self._send_json(service.tidy_memory_store())
         self._send_json({"detail": "not found"}, 404)
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib hook

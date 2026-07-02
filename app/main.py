@@ -75,6 +75,11 @@ def api_memory_confirmations() -> list[dict[str, Any]]:
     return service.memory_confirmations()
 
 
+@app.get("/api/debug")
+def api_debug() -> dict[str, Any]:
+    return service.debug_snapshot()
+
+
 @app.post("/api/memory-confirmations/{confirmation_id}/accept")
 def api_accept_memory_confirmation(confirmation_id: str) -> dict[str, Any]:
     item = service.confirm_memory_candidate(confirmation_id, True)
@@ -94,6 +99,11 @@ def api_reject_memory_confirmation(confirmation_id: str) -> dict[str, Any]:
 @app.delete("/api/memories/{memory_id}")
 def api_delete_memory(memory_id: str) -> dict[str, bool]:
     return {"deleted": service.delete_memory(memory_id)}
+
+
+@app.post("/api/memories/tidy")
+def api_tidy_memories() -> dict[str, Any]:
+    return service.tidy_memory_store()
 
 
 @app.get("/api/llm/health")

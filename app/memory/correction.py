@@ -76,10 +76,12 @@ def _matches_query(memory: dict[str, Any], query: str) -> bool:
     if not query:
         return False
     memory_key = canonical_content(memory)
-    compact_query = re.sub(r"[，,。.!！；;\s]", "", query)
+    query_type = infer_type(query)
+    normalized_query = normalize_content(query_type, query)
+    compact_query = canonical_content({"content": normalized_query})
     if compact_query and (compact_query in memory_key or memory_key in compact_query):
         return True
-    query_tokens = set(tokens(query))
+    query_tokens = set(tokens(query)) | set(tokens(normalized_query))
     memory_tokens = set(tokens(memory.get("content", ""))) | set(memory.get("tags", []))
     return bool(query_tokens & memory_tokens)
 
