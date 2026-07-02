@@ -253,6 +253,26 @@ def test_memory_calibration_cases_pass_current_baseline() -> None:
     assert report["score"] == 1.0
 
 
+def test_calibration_cases_can_check_followup_and_feedback() -> None:
+    report = evaluate_calibration_cases(
+        [
+            {
+                "name": "intent completion",
+                "seed_memories": ["明天下午我要交材料，现在有点焦虑。"],
+                "user_text": "材料递上去了",
+                "intent": {"has_completion_signal": True, "is_casual_chat": False, "information_density": 2.2},
+                "expected_followup_mode": "acknowledge_closure",
+                "previous_log": {"prompt_manifest": {"followup_mode": "gentle_follow_up", "used_memory_reasons": {"mem_1": "待跟进"}}},
+                "expected_feedback_signals": ["followup_resolved"],
+            }
+        ]
+    )
+
+    assert report["score"] == 1.0
+    assert report["results"][0]["checks"]["followup_mode"] is True
+    assert report["results"][0]["checks"]["feedback_signals"] is True
+
+
 def test_semantic_similarity_handles_synonyms_without_token_overlap() -> None:
     assert semantic_similarity("我最近睡不好", "用户最近失眠严重") > 0.2
     assert len(semantic_vector("我最近睡不好")) == DEFAULT_MEMORY_PARAMS.semantic.vector_dimensions
