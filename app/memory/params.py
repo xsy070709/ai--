@@ -61,12 +61,16 @@ class ConversationParams:
     completion_words: tuple[str, ...] = (
         "交完",
         "做完",
+        "办完",
+        "处理完",
         "完成",
         "结束",
         "面完",
         "考完",
         "提交了",
         "弄完",
+        "弄好了",
+        "处理好了",
         "解决了",
         "已经好了",
         "搞定",
@@ -78,7 +82,7 @@ class ConversationParams:
         "交了",
         "交上去了",
     )
-    completion_overlap_anchors: tuple[str, ...] = ("材料", "面试", "考试", "项目", "开会", "作业", "报告", "任务", "简历", "论文")
+    completion_overlap_anchors: tuple[str, ...] = ("材料", "面试", "考试", "项目", "开会", "作业", "报告", "任务", "简历", "论文", "汇报")
     casual_max_chars: int = 12
     casual_exemption_words: tuple[str, ...] = ("继续", "后来", "上次", "还记得", "怎么办", "焦虑", "难受")
     followup_item_limit: int = 2
@@ -91,10 +95,12 @@ class ConversationParams:
 
 @dataclass(frozen=True)
 class SignalParams:
-    time_words: tuple[str, ...] = ("明天", "今晚", "下午", "周末", "下周", "月底", "等会", "早上", "晚上", "今天", "刚才", "昨晚", "这次", "现在")
-    task_words: tuple[str, ...] = ("要", "得", "准备", "提交", "面试", "考试", "开会", "交材料", "做完", "投简历", "写论文", "交作业")
-    vulnerable_events: tuple[str, ...] = ("分手", "失恋", "被辞", "吵架", "崩了", "破防", "撑不住")
+    time_words: tuple[str, ...] = ("明天", "今晚", "下午", "周末", "下周", "月底", "等会", "早上", "晚上", "今天", "刚才", "昨晚", "这次", "现在", "后天", "中午")
+    task_words: tuple[str, ...] = ("要", "得", "准备", "提交", "面试", "考试", "开会", "交材料", "做完", "投简历", "写论文", "交作业", "汇报", "答辩", "实习", "复习")
+    vulnerable_events: tuple[str, ...] = ("分手", "失恋", "被辞", "吵架", "崩了", "破防", "撑不住", "绷不住", "心态炸")
     low_density_fillers: tuple[str, ...] = ("哈哈", "嘿嘿", "笑死", "天气不错", "还行", "没事", "早", "晚安", "嗯嗯")
+    correction_words: tuple[str, ...] = ("不是", "记错", "不对", "错了", "改成", "其实是", "应该是")
+    deletion_words: tuple[str, ...] = ("别记", "不要记", "不用记", "忘掉", "删掉", "删了", "别存", "不要存", "忽略这条")
 
 
 @dataclass(frozen=True)

@@ -10,10 +10,10 @@ PARAMS = DEFAULT_MEMORY_PARAMS
 EMOTION_GROUPS: dict[str, tuple[str, ...]] = {
     "压力": ("压力", "焦虑", "紧张", "拖延", "效率不高", "心慌", "不安", "慌", "压力山大", "stress", "stressed"),
     "疲惫": ("累", "困", "疲惫", "没劲", "很 tired", "very tired", "tired", "exhausted", "burnt out"),
-    "低落": ("难受", "委屈", "低落", "沮丧", "emo", "失落", "空落", "分手", "失恋"),
-    "烦躁": ("烦", "烦躁", "生气", "火大", "崩溃", "破防"),
-    "积极": ("开心", "高兴", "舒服", "顺利", "爽", "轻松"),
-    "脆弱": ("害怕", "崩溃", "撑不住", "想哭", "破防", "顶不住"),
+    "低落": ("难受", "委屈", "低落", "沮丧", "emo", "emo了", "失落", "空落", "分手", "失恋", "麻了"),
+    "烦躁": ("烦", "烦躁", "生气", "火大", "崩溃", "破防", "心态炸", "炸了"),
+    "积极": ("开心", "高兴", "舒服", "顺利", "爽", "轻松", "一身轻松"),
+    "脆弱": ("害怕", "崩溃", "撑不住", "想哭", "破防", "顶不住", "绷不住", "心态炸"),
 }
 
 
@@ -28,6 +28,14 @@ def emotion_tags_for(text: str) -> list[str]:
 
 def has_completion_signal(text: str) -> bool:
     return contains_any(text, PARAMS.conversation.completion_words)
+
+
+def has_correction_signal(text: str) -> bool:
+    return contains_any(text, PARAMS.signals.correction_words) or has_deletion_signal(text)
+
+
+def has_deletion_signal(text: str) -> bool:
+    return contains_any(text, PARAMS.signals.deletion_words)
 
 
 def has_time_signal(text: str) -> bool:
@@ -49,7 +57,7 @@ def information_density(text: str) -> float:
         score += 0.75
     if contains_any(stripped, PARAMS.signals.vulnerable_events):
         score += 1.25
-    if contains_any(stripped, ("记住", "别记", "不要记", "删", "不对", "错了", "雷区", "别提", "不想聊")):
+    if contains_any(stripped, ("记住", "雷区", "别提", "不想聊")) or has_correction_signal(stripped):
         score += 1.0
     if contains_any(stripped, ("我们约定", "一起", "下次继续", "刚才说好", "以后我们")):
         score += 0.9

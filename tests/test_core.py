@@ -373,6 +373,29 @@ def test_semantic_completion_words_close_open_loop() -> None:
     assert closed[0]["open"] is False
 
 
+def test_expanded_completion_words_close_open_loop() -> None:
+    memories = []
+    upsert_memories(memories, extract_memory_candidates("明天中午要汇报材料。"))
+
+    closed = close_resolved_open_loops(memories, "材料处理好了，一身轻松。")
+
+    assert closed
+    assert closed[0]["open"] is False
+
+
+def test_expanded_task_words_extract_goal() -> None:
+    memories = extract_memory_candidates("后天上午要答辩，还得复习。")
+
+    assert any(memory["type"] == "goal" and memory.get("due_at") for memory in memories)
+
+
+def test_short_new_slang_emotion_is_high_density() -> None:
+    memories = extract_memory_candidates("心态炸了")
+
+    assert any(memory["type"] == "emotion_pattern" for memory in memories)
+    assert not looks_like_casual_chat("心态炸了")
+
+
 def test_long_shared_experience_is_not_dropped_by_length() -> None:
     text = "我们约定下次继续把项目拆成小任务，然后每次只检查一个最卡住的地方，不要一下子铺开太多细节，避免我压力太大。"
 
@@ -476,6 +499,16 @@ def test_user_can_delete_memory() -> None:
     upsert_memories(memories, extract_memory_candidates("记住我喜欢安静一点的回复"))
 
     result = apply_user_corrections(memories, "别记我喜欢安静一点的回复")
+
+    assert result["deleted"]
+    assert not [memory for memory in memories if memory["status"] == "active"]
+
+
+def test_user_can_delete_memory_with_expanded_phrasing() -> None:
+    memories = []
+    upsert_memories(memories, extract_memory_candidates("记住我喜欢安静一点的回复"))
+
+    result = apply_user_corrections(memories, "这条不用记，我喜欢安静一点的回复")
 
     assert result["deleted"]
     assert not [memory for memory in memories if memory["status"] == "active"]

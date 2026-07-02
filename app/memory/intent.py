@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ..time_context import current_time_context
-from .signals import emotion_tags_for, has_completion_signal, has_task_signal, has_time_signal, is_high_density, looks_like_casual_chat
+from .signals import emotion_tags_for, has_completion_signal, has_correction_signal, has_task_signal, has_time_signal, is_high_density, looks_like_casual_chat
 from .text import topics_from_text, unfinished_items, valence_from_text
 
 
@@ -29,7 +29,7 @@ class RuleBasedIntentClassifier:
         return {
             "has_completion_signal": has_completion_signal(user_text),
             "completion_target": _completion_target(user_text),
-            "has_correction_intent": any(word in user_text for word in ["别记", "不要记", "删掉", "不是", "不对", "错了"]),
+            "has_correction_intent": has_correction_signal(user_text),
             "primary_emotion": emotions[0] if emotions else "平稳",
             "secondary_emotion": emotions[1] if len(emotions) > 1 else None,
             "valence": valence_from_text(user_text),

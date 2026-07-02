@@ -5,14 +5,12 @@ from typing import Any
 
 from ..storage import now_iso
 from .schema import make_memory
+from .signals import has_correction_signal, has_deletion_signal
 from .text import canonical_content, infer_type, normalize_content, tokens, valence_from_text
 
 
-CORRECTION_MARKERS = ["不是", "记错", "别记", "不要记", "忘掉", "删掉", "改成", "其实是"]
-
-
 def apply_user_corrections(memories: list[dict[str, Any]], user_text: str) -> dict[str, Any]:
-    if not any(marker in user_text for marker in CORRECTION_MARKERS):
+    if not has_correction_signal(user_text):
         return {"corrected": [], "deleted": [], "created": []}
 
     deleted = _delete_requested(memories, user_text)
@@ -21,7 +19,7 @@ def apply_user_corrections(memories: list[dict[str, Any]], user_text: str) -> di
 
 
 def _delete_requested(memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
-    if not any(marker in user_text for marker in ["别记", "不要记", "忘掉", "删掉"]):
+    if not has_deletion_signal(user_text):
         return []
     query = _correction_query(user_text)
     deleted = []
@@ -87,7 +85,7 @@ def _matches_query(memory: dict[str, Any], query: str) -> bool:
 
 
 def _correction_query(user_text: str) -> str:
-    cleaned = re.sub(r"(你)?记错了|别记|不要记|忘掉|删掉|这个|这条|记忆", "", user_text)
+    cleaned = re.sub(r"(你)?记错了|别记|不要记|不用记|忘掉|删掉|删了|别存|不要存|忽略这条|这个|这条|记忆", "", user_text)
     return cleaned.strip("，, 。.!！")
 
 
