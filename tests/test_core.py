@@ -941,6 +941,34 @@ def test_topic_shift_can_trigger_summary_before_fixed_interval() -> None:
     assert should_build_session_summary(messages, []) is True
 
 
+def test_same_topic_does_not_create_fixed_interval_summary() -> None:
+    messages = []
+    for index in range(16):
+        messages.extend(
+            [
+                {"role": "user", "content": f"项目材料继续推进第{index}步"},
+                {"role": "assistant", "content": "继续拆小步。"},
+            ]
+        )
+    summaries = [{"message_count": 16}]
+
+    assert should_build_session_summary(messages, summaries) is False
+
+
+def test_summary_has_long_interval_backstop() -> None:
+    messages = []
+    for index in range(40):
+        messages.extend(
+            [
+                {"role": "user", "content": f"项目材料继续推进第{index}步"},
+                {"role": "assistant", "content": "继续拆小步。"},
+            ]
+        )
+    summaries = [{"message_count": 16}]
+
+    assert should_build_session_summary(messages, summaries) is True
+
+
 def test_twenty_turn_single_window_chat(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,

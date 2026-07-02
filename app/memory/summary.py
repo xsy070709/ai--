@@ -51,7 +51,8 @@ def should_build_session_summary(messages: list[dict[str, Any]], summaries: list
         return False
     if not summaries and count >= PARAMS.min_summary_messages:
         return True
-    if count >= PARAMS.min_summary_messages and count % PARAMS.fixed_summary_interval == 0:
+    last_summary_count = int(summaries[-1].get("message_count", 0)) if summaries else 0
+    if summaries and count - last_summary_count >= PARAMS.max_summary_interval:
         return True
     return _has_topic_shift(messages)
 

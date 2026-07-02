@@ -53,6 +53,7 @@ class SummaryParams:
     min_summary_messages: int = 16
     topic_shift_min_messages: int = 8
     fixed_summary_interval: int = 16
+    max_summary_interval: int = 64
     topic_shift_similarity_threshold: float = 0.35
 
 
