@@ -6,6 +6,7 @@ from typing import Any
 from .schema import make_memory
 from .signals import has_task_signal, has_time_signal, information_density, is_high_density
 from .text import clean_text, emotion_cause, emotion_tags, first_sentence, infer_type, normalize_content, valence_from_text
+from .time_reasoning import infer_deadline
 
 
 def extract_memory_candidates(user_text: str, assistant_text: str = "") -> list[dict[str, Any]]:
@@ -114,7 +115,11 @@ def _extract_goals_and_tasks(text: str) -> list[dict[str, Any]]:
     has_time = has_time_signal(text)
     has_task = has_task_signal(text)
     if has_time and has_task:
-        candidates.append(make_memory("goal", f"待跟进：{text}", 0.78, False, text, open_item=True, valence=valence_from_text(text)))
+        memory = make_memory("goal", f"待跟进：{text}", 0.78, False, text, open_item=True, valence=valence_from_text(text))
+        deadline = infer_deadline(text, memory.get("created_at"))
+        if deadline:
+            memory.update(deadline)
+        candidates.append(memory)
     if any(word in text for word in ["目标", "计划", "想要", "希望做到"]):
         candidates.append(make_memory("goal", f"用户目标：{text}", 0.72, False, text, open_item=True, valence=valence_from_text(text)))
     return candidates

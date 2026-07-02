@@ -181,6 +181,7 @@ class DeepSeekGateway:
                 "response_format": payload.get("response_format"),
                 "max_tokens": payload.get("max_tokens"),
                 "messages": payload.get("messages", []),
+                "prompt_stats": self._prompt_stats(payload.get("messages", [])),
                 "provider": result.provider,
                 "degraded": result.degraded,
                 "elapsed_ms": result.elapsed_ms,
@@ -194,6 +195,15 @@ class DeepSeekGateway:
 
     def debug_requests(self) -> list[dict[str, Any]]:
         return deepcopy(self._request_log)
+
+    def _prompt_stats(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        system_messages = [message for message in messages if message.get("role") == "system"]
+        return {
+            "message_count": len(messages),
+            "total_chars": sum(len(message.get("content", "")) for message in messages),
+            "stable_system_chars": len(system_messages[0].get("content", "")) if system_messages else 0,
+            "dynamic_system_chars": len(system_messages[1].get("content", "")) if len(system_messages) > 1 else 0,
+        }
 
     def _fallback(self, messages: list[dict[str, str]], started: float, error: str) -> LLMResult:
         user_text = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")

@@ -126,13 +126,13 @@ class ChatService:
         state = self.store.snapshot()
         session = state["sessions"][state["active_session_id"]]
         persona = self._active_persona(state)
+        time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
         memory_user_text = logical_turn["text"]
-        memory_context = build_memory_context(state.get("memories", []), memory_user_text)
+        memory_context = build_memory_context(state.get("memories", []), memory_user_text, now=time_context["iso"])
         intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
-        time_context = current_time_context()
         model_messages = self._build_prompt(session.get("messages", []), persona, memory_context, user_text, time_context)
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
@@ -309,17 +309,20 @@ class ChatService:
         time_context: dict[str, str] | None = None,
     ) -> list[dict[str, str]]:
         time_context = time_context or current_time_context()
-        system = "\n".join(
+        dynamic_context = "\n".join(
             [
-                "你需要作为虚拟好友进行自然中文聊天。",
+                "运行时上下文：",
                 time_context["prompt_text"],
-                active_persona_text(persona),
                 "记忆系统给出的长期画像和本轮相关记忆如下。只在自然、有帮助时使用，不要机械复述。",
                 memory_context["prompt_text"],
-                "回复要求：默认简短，先回应情绪，再回应事实；能自然接续待跟进事项；不要编造历史；不要泄露第三方隐私。",
             ]
         )
-        return [{"role": "system", "content": system}, *work_memory(messages, user_text), {"role": "user", "content": user_text}]
+        return [
+            {"role": "system", "content": _stable_system_prompt(persona)},
+            {"role": "system", "content": dynamic_context},
+            *work_memory(messages, user_text),
+            {"role": "user", "content": user_text},
+        ]
 
     def _debug_raw_flow(
         self,
@@ -355,3 +358,17 @@ def _latest_chat_flow(generation_logs: list[dict[str, Any]], api_requests: list[
         ],
         "note": "chat_api_messages is the persisted chat-completion prompt. nearby_api_requests are live process request/response records.",
     }
+
+
+def _stable_system_prompt(persona: dict[str, Any] | None = None) -> str:
+    return "\n".join(
+        [
+            "你需要作为拟人虚拟好友进行自然中文聊天。",
+            active_persona_text(persona),
+            "回复原则：默认简短，先回应情绪，再回应事实；像熟悉的朋友一样自然接话。",
+            "时间原则：必须使用运行时上下文里的当前真实时间理解今天、明天、昨天、今晚、下周等相对时间。",
+            "记忆原则：长期记忆只在自然、有帮助时使用；不要机械复述；不要说出内部字段名。",
+            "跟进原则：如果上下文提示某个待办 time_state=elapsed，可以轻问结果，但不能假装已经知道结果。",
+            "边界原则：不要编造历史；不要泄露第三方隐私；不伪装真人；不承诺现实身份。",
+        ]
+    )

@@ -271,7 +271,7 @@ def test_structured_llm_extractor_maps_json_to_memory() -> None:
     assert memories[0]["type"] == "preference"
     assert memories[0]["extractor"] == "structured_llm"
     assert memories[0]["content"] == "用户喜欢先被安慰再分析"
-    assert "当前真实时间" in gateway.calls[-1]["messages"][0]["content"]
+    assert "当前日期" in gateway.calls[-1]["messages"][1]["content"]
 
 
 def test_structured_llm_extractor_falls_back_when_degraded() -> None:
@@ -297,7 +297,7 @@ def test_structured_llm_intent_classifier_maps_json() -> None:
     assert intent["classifier"] == "structured_llm_intent"
     assert intent["completion_target"] == "面试"
     assert intent["topics"] == ["面试"]
-    assert "当前真实时间" in gateway.calls[-1]["messages"][0]["content"]
+    assert "当前日期" in gateway.calls[-1]["messages"][1]["content"]
 
 
 def test_structured_llm_intent_classifier_falls_back_when_degraded() -> None:
@@ -420,6 +420,18 @@ def test_memory_context_prioritizes_open_and_emotional_recall() -> None:
     assert "goal" in recalled_types
     assert "emotion_pattern" in recalled_types
     assert "待跟进" in context["prompt_text"]
+
+
+def test_elapsed_open_loop_can_be_followed_up_during_casual_chat() -> None:
+    memory = make_memory("goal", "待跟进：明天中午要汇报材料", 0.8, False, "明天中午要汇报材料", open_item=True)
+    memory["created_at"] = "2026-07-01T10:00:00+08:00"
+    memory["evidence"][0]["created_at"] = "2026-07-01T10:00:00+08:00"
+
+    context = build_memory_context([memory], "下午好呀", now="2026-07-02T15:30:00+08:00")
+
+    assert context["followup_plan"]["mode"] == "elapsed_casual_follow_up"
+    assert context["followup_plan"]["items"][0]["time_state"] == "elapsed"
+    assert "time_state=elapsed" in context["prompt_text"]
 
 
 def test_relationship_and_shared_memory_shape_human_context() -> None:
@@ -865,6 +877,18 @@ def test_work_memory_window_is_dynamic() -> None:
 
     assert len(work_memory(messages, "早")) == 8
     assert len(work_memory(messages, "我现在因为项目很焦虑，继续上次")) == 36
+
+
+def test_casual_work_memory_stays_short_after_recent_emotion() -> None:
+    messages = [{"role": "user", "content": f"第{index}轮普通聊天"} for index in range(32)]
+    messages.extend(
+        [
+            {"role": "user", "content": "刚才有点焦虑"},
+            {"role": "assistant", "content": "我陪你慢慢捋。"},
+        ]
+    )
+
+    assert len(work_memory(messages, "晚上好")) == 8
 
 
 def test_topic_shift_can_trigger_summary_before_fixed_interval() -> None:

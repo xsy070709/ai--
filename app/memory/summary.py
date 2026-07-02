@@ -59,11 +59,11 @@ def should_build_session_summary(messages: list[dict[str, Any]], summaries: list
 def _dynamic_work_memory_limit(messages: list[dict[str, Any]], user_text: str) -> int:
     if user_text and (is_high_density(user_text) or any(word in user_text for word in ["继续", "上次", "还记得", "后来"])):
         return PARAMS.deep_work_memory_limit
+    if user_text and looks_like_casual_chat(user_text):
+        return PARAMS.casual_work_memory_limit
     recent_user_text = " ".join(message["content"] for message in messages[-6:] if message.get("role") == "user")
     if recent_user_text and emotion_tags(recent_user_text):
         return PARAMS.deep_work_memory_limit
-    if user_text and looks_like_casual_chat(user_text):
-        return PARAMS.casual_work_memory_limit
     return PARAMS.default_work_memory_limit
 
 

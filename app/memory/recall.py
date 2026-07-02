@@ -6,18 +6,21 @@ from .maintenance import should_apply_recall_cooldown
 from .params import DEFAULT_MEMORY_PARAMS
 from .semantic import semantic_similarity
 from .text import emotion_tags, tokens
+from .time_reasoning import annotate_time_state
 
 
 PARAMS = DEFAULT_MEMORY_PARAMS.recall
 
 
-def relevant_memories(memories: list[dict[str, Any]], user_text: str, limit: int = PARAMS.default_limit) -> list[dict[str, Any]]:
+def relevant_memories(memories: list[dict[str, Any]], user_text: str, limit: int = PARAMS.default_limit, now: str | None = None) -> list[dict[str, Any]]:
     active = [m for m in memories if m.get("status") == "active"]
     query_tokens = set(tokens(user_text))
     query_emotions = set(emotion_tags(user_text))
     scored: list[tuple[float, dict[str, Any]]] = []
 
     for memory in active:
+        if memory.get("type") == "goal":
+            memory = annotate_time_state(memory, now)
         score, reasons = _score_memory(memory, user_text, query_tokens, query_emotions)
         if score >= PARAMS.min_score_threshold:
             recalled = dict(memory)
@@ -44,6 +47,9 @@ def _score_memory(memory: dict[str, Any], user_text: str, query_tokens: set[str]
     if memory.get("open"):
         score += PARAMS.open_item_bonus
         reasons.append("待跟进")
+    if memory.get("open") and memory.get("time_state") == "elapsed":
+        score += PARAMS.history_continuation_bonus
+        reasons.append("时间已过")
     if query_emotions and memory.get("type") in {"emotion_pattern", "response_rule"}:
         score += PARAMS.emotion_match_bonus
         reasons.append("情绪相关")

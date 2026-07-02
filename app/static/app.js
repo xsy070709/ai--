@@ -206,6 +206,7 @@ function renderDevApi() {
             <span>${escapeHtml(request.created_at)}</span>
             <span>${request.degraded ? "degraded" : "ok"}</span>
             <span>${request.client_cache_hit ? "client cache hit" : "network/local"}</span>
+            <span>${escapeHtml(formatPromptStats(request.prompt_stats))}</span>
           </div>
           <details open>
             <summary>request messages</summary>
@@ -217,6 +218,7 @@ function renderDevApi() {
               thinking: request.thinking,
               response_format: request.response_format,
               max_tokens: request.max_tokens,
+              prompt_stats: request.prompt_stats,
               usage: request.usage,
               error: request.error,
             }))}</pre>
@@ -224,6 +226,11 @@ function renderDevApi() {
         </article>`
     )
     .join("");
+}
+
+function formatPromptStats(stats) {
+  if (!stats) return "prompt stats n/a";
+  return `prompt ${stats.total_chars || 0} chars · stable ${stats.stable_system_chars || 0} · dynamic ${stats.dynamic_system_chars || 0}`;
 }
 
 function renderDevRaw() {

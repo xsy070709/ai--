@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from .schema import parse_time
+from .time_reasoning import annotate_time_state
 
 
-def build_user_profile(memories: list[dict[str, Any]]) -> dict[str, Any]:
+def build_user_profile(memories: list[dict[str, Any]], now: str | None = None) -> dict[str, Any]:
     active = [m for m in memories if m.get("status") == "active"]
+    active = [annotate_time_state(memory, now) if memory.get("type") == "goal" else memory for memory in active]
     profile = {
         "preferences": _top_contents(active, "preference", 6),
         "dislikes": _top_contents(active, "dislike", 6),

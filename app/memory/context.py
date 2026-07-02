@@ -8,10 +8,10 @@ from .profile import build_user_profile
 from .recall import relevant_memories
 
 
-def build_memory_context(memories: list[dict[str, Any]], user_text: str, limit: int = 8) -> dict[str, Any]:
-    profile = build_user_profile(memories)
-    recalled = relevant_memories(memories, user_text, limit=limit)
-    followup_plan = build_followup_plan(profile, recalled, user_text)
+def build_memory_context(memories: list[dict[str, Any]], user_text: str, limit: int = 8, now: str | None = None) -> dict[str, Any]:
+    profile = build_user_profile(memories, now=now)
+    recalled = relevant_memories(memories, user_text, limit=limit, now=now)
+    followup_plan = build_followup_plan(profile, recalled, user_text, now=now)
     disclosure_plan = build_disclosure_plan(recalled, user_text, followup_plan)
     return {
         "profile": profile,
@@ -40,7 +40,7 @@ def format_memory_context(
     ]
     for label, items in sections:
         if items:
-            lines.append(f"- {label}：" + "；".join(item["content"] for item in items[:4]))
+            lines.append(f"- {label}：" + "；".join(_format_profile_item(item) for item in items[:4]))
     if profile["open_loops"]:
         lines.append("- 可自然跟进：" + "；".join(item["content"] for item in profile["open_loops"][:3]))
     if profile["tone_guidance"]:
@@ -54,7 +54,7 @@ def format_memory_context(
         for memory in recalled:
             reason = memory.get("recall_reason", "相关")
             policy = memory.get("surface_policy", "use_when_relevant")
-            lines.append(f"- [{memory['type']}/{reason}/{policy}] {memory['content']}")
+            lines.append(f"- [{memory['type']}/{reason}/{policy}] {_format_profile_item(memory)}")
     if followup_plan:
         lines.append(format_followup_plan(followup_plan))
     if disclosure_plan:
@@ -62,3 +62,10 @@ def format_memory_context(
     if len(lines) == 1:
         lines.append("- 暂无稳定画像。")
     return "\n".join(lines)
+
+
+def _format_profile_item(memory: dict[str, Any]) -> str:
+    content = memory["content"]
+    if memory.get("type") == "goal" and memory.get("time_state") in {"elapsed", "soon", "upcoming"}:
+        return f"{content}（due_at={memory.get('due_at')}，time_state={memory.get('time_state')}，{memory.get('time_reason')}）"
+    return content
