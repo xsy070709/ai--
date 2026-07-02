@@ -1010,6 +1010,35 @@ def test_sqlite_search_falls_back_to_semantic_match(tmp_path) -> None:
     assert store.search_memories("我最近睡不好")
 
 
+def test_sqlite_search_fills_exact_results_with_semantic_matches(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).extend(
+            [
+                make_memory("emotion_pattern", "用户最近工作压力很大", 0.8, False, "工作压力"),
+                make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠"),
+            ]
+        )
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    results = store.search_memories("压力 睡不好", limit=2)
+    contents = [memory["content"] for memory in results]
+
+    assert any("压力" in content for content in contents)
+    assert any("失眠" in content for content in contents)
+
+
 def test_create_store_uses_configured_backend(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
