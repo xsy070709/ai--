@@ -707,6 +707,39 @@ def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     assert (tmp_path / "store.sqlite3").exists()
 
 
+def test_chat_service_injects_session_summaries_into_prompt(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+
+    def seed_summary(state):
+        session = state["sessions"][state["active_session_id"]]
+        session["summaries"] = [
+            {
+                "id": "summary_1",
+                "message_count": 16,
+                "summary": "近期话题：项目。最近用户提到：项目材料推进卡住了",
+                "follow_up_suggestion": "下次可自然问一句：项目材料后来怎么样了。",
+            }
+        ]
+        return None
+
+    service.store.mutate(seed_summary)
+    asyncio.run(service.chat("继续刚才那个"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    dynamic_system = latest_log["api_messages"][1]["content"]
+    assert "会话摘要" in dynamic_system
+    assert "项目材料推进卡住了" in dynamic_system
+    assert latest_log["prompt_manifest"]["used_session_summary_ids"] == ["summary_1"]
+
+
 def test_chat_service_records_feedback_signals(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,

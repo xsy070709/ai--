@@ -133,7 +133,15 @@ class ChatService:
         intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
-        model_messages = self._build_prompt(session.get("messages", []), persona, memory_context, user_text, time_context)
+        prompt_summaries = session.get("summaries", [])
+        model_messages = self._build_prompt(
+            session.get("messages", []),
+            persona,
+            memory_context,
+            user_text,
+            time_context,
+            prompt_summaries,
+        )
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
         assistant_message = {
@@ -175,6 +183,8 @@ class ChatService:
             maintenance_result = maintain_memories(current_memories)
             prompt_manifest = {
                 "work_memory_count": len(work_memory(active_session["messages"], memory_user_text)),
+                "session_summary_count": len(prompt_summaries),
+                "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
                 "logical_turn": logical_turn,
                 "used_memory_ids": [m["id"] for m in memories],
                 "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
@@ -308,12 +318,14 @@ class ChatService:
         memory_context: dict[str, Any],
         user_text: str,
         time_context: dict[str, str] | None = None,
+        summaries: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, str]]:
         time_context = time_context or current_time_context()
         dynamic_context = "\n".join(
             [
                 "运行时上下文：",
                 time_context["prompt_text"],
+                _format_session_summaries(summaries or []),
                 "记忆系统给出的长期画像和本轮相关记忆如下。只在自然、有帮助时使用，不要机械复述。",
                 memory_context["prompt_text"],
             ]
@@ -373,3 +385,18 @@ def _stable_system_prompt(persona: dict[str, Any] | None = None) -> str:
             "边界原则：不要编造历史；不要泄露第三方隐私；不伪装真人；不承诺现实身份。",
         ]
     )
+
+
+def _format_session_summaries(summaries: list[dict[str, Any]]) -> str:
+    if not summaries:
+        return "会话摘要：暂无。"
+    lines = ["会话摘要（只用于理解较早上下文，不要机械复述）："]
+    for summary in summaries[-3:]:
+        text = summary.get("summary", "")
+        suggestion = summary.get("follow_up_suggestion")
+        marker = f"#{summary.get('message_count', '?')}"
+        if suggestion:
+            lines.append(f"- {marker} {text}；{suggestion}")
+        else:
+            lines.append(f"- {marker} {text}")
+    return "\n".join(lines)
