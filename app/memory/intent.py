@@ -12,6 +12,7 @@ from .signals import (
     has_deletion_signal,
     has_task_signal,
     has_time_signal,
+    information_density,
     is_high_density,
     looks_like_casual_chat,
 )
@@ -49,7 +50,7 @@ class RuleBasedIntentClassifier:
             "has_followup_invitation": any(word in user_text for word in ["还记得", "之前", "上次", "继续", "后来"]),
             "topics": topics,
             "unfinished_items": unfinished_items(user_text),
-            "information_density": round(2.0 if is_high_density(user_text) else 0.0, 3),
+            "information_density": round(information_density(user_text), 3),
             "classifier": self.name,
         }
 

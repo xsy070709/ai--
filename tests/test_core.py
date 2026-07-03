@@ -344,6 +344,13 @@ def test_rule_based_intent_classifier_extracts_high_value_signals() -> None:
     assert intent["is_casual_chat"] is False
 
 
+def test_rule_based_intent_reports_actual_information_density() -> None:
+    intent = RuleBasedIntentClassifier().classify("7/8 15:00要面试")
+
+    assert 0 < intent["information_density"] < DEFAULT_MEMORY_PARAMS.conversation.high_density_threshold
+    assert intent["unfinished_items"]
+
+
 def test_structured_llm_intent_classifier_maps_json() -> None:
     gateway = FakeIntentGateway()
     intent = asyncio.run(StructuredLLMIntentClassifier(gateway).classify_async("明天面试"))
