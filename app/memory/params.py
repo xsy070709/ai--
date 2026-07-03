@@ -105,7 +105,7 @@ class ConversationParams:
         "论文",
     )
     casual_max_chars: int = 12
-    casual_exemption_words: tuple[str, ...] = ("继续", "后来", "上次", "还记得", "怎么办", "焦虑", "难受")
+    casual_exemption_words: tuple[str, ...] = ("继续", "后来", "上次", "还记得", "怎么办", "焦虑", "难受", "压力山大", "anxious", "摆烂", "躺平")
     followup_item_limit: int = 2
     profile_open_loop_limit: int = 2
     high_density_threshold: float = 2.0
@@ -150,7 +150,7 @@ class SignalParams:
     )
     time_words: tuple[str, ...] = ("明天", "今晚", "下午", "周末", "下周", "月底", "等会", "早上", "晚上", "今天", "刚才", "昨晚", "这次", "现在", "后天", "中午")
     task_words: tuple[str, ...] = ("要", "得", "准备", "提交", "面试", "考试", "开会", "交材料", "做完", "投简历", "写论文", "交作业", "汇报", "答辩", "实习", "复习")
-    vulnerable_events: tuple[str, ...] = ("分手", "失恋", "被辞", "吵架", "崩了", "破防", "撑不住", "绷不住", "心态炸")
+    vulnerable_events: tuple[str, ...] = ("分手", "失恋", "被辞", "吵架", "崩了", "破防", "撑不住", "绷不住", "心态炸", "摆烂", "躺平")
     low_density_fillers: tuple[str, ...] = ("哈哈", "嘿嘿", "笑死", "天气不错", "还行", "没事", "早", "晚安", "嗯嗯")
     correction_words: tuple[str, ...] = ("不是", "记错", "不对", "错了", "改成", "其实是", "应该是")
     deletion_words: tuple[str, ...] = (

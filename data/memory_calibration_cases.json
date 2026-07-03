@@ -241,5 +241,17 @@
     "expected_audit_issues": ["over_explicit_tone_memory"],
     "unexpected_audit_issues": ["forbidden_memory_surface"],
     "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "slang burnout is remembered",
+    "user_text": "我摆烂了",
+    "expected_memory_types": ["emotion_pattern"],
+    "unexpected_memory_types": ["goal", "preference"]
+  },
+  {
+    "name": "mixed language anxiety is remembered",
+    "user_text": "今天 very anxious",
+    "expected_memory_types": ["emotion_pattern"],
+    "unexpected_memory_types": ["goal", "preference"]
   }
 ]

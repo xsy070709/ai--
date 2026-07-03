@@ -547,6 +547,14 @@ def test_high_density_short_text_is_not_treated_as_casual() -> None:
     assert looks_like_casual_chat("哈哈哈哈今天真的太搞笑了")
 
 
+def test_slang_and_mixed_language_emotions_are_not_treated_as_casual() -> None:
+    assert information_density("我摆烂了") >= 2.0
+    assert not looks_like_casual_chat("我摆烂了")
+    assert not looks_like_casual_chat("今天 very anxious")
+    assert any(memory["type"] == "emotion_pattern" for memory in extract_memory_candidates("我摆烂了"))
+    assert any(memory["type"] == "emotion_pattern" for memory in extract_memory_candidates("今天 very anxious"))
+
+
 def test_logical_turn_clusters_recent_short_user_fragments() -> None:
     previous = [
         {"id": "u1", "role": "user", "content": "明天", "created_at": "2026-07-02T10:00:00+08:00"},

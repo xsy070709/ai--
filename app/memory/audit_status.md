@@ -44,7 +44,7 @@ Remaining risk: the current semantic search is local and deterministic. Write-si
 - Calibration scripts provide an automation-friendly gate for positive and negative recall/follow-up/feedback/correction expectations.
 - Feedback analysis now includes parameter metadata with current values, sensitivity, safe ranges, and expected adjustment effects for high-impact knobs.
 
-Remaining risk: calibration coverage is still small. The labeled baseline now covers twenty-two cases, including correction mutation, disclosure engagement, and pattern-label over-disclosure, but it is still below the 50-100 case target from the roadmap.
+Remaining risk: calibration coverage is still small. The labeled baseline now covers twenty-four cases, including correction mutation, disclosure engagement, pattern-label over-disclosure, slang low-motivation, and mixed-language anxiety, but it is still below the 50-100 case target from the roadmap.
 
 ### 4. Keyword Flexibility And Intent
 
@@ -52,6 +52,7 @@ Remaining risk: calibration coverage is still small. The labeled baseline now co
 - The structured LLM intent path exists and falls back to deterministic rules when unavailable.
 - Rule intent now preserves actual information-density scores instead of flattening them away.
 - Rule fallback now covers additional completion/deletion phrases and comma-style corrections such as `不是 X，是 Y`.
+- Rule signal coverage now includes slang fatigue/avoidance and mixed-language anxiety expressions such as `摆烂`, `躺平`, and `very anxious`.
 
 Remaining risk: alias coverage is still curated and small; there is no trained classifier or always-on semantic intent model yet.
 
@@ -64,7 +65,7 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py` (exits non-zero when any case fails)
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers twenty-two cases with a perfect score.
+Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers twenty-four cases with a perfect score.
 
 ## Next Iteration Candidates
 
