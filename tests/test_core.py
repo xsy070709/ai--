@@ -31,6 +31,7 @@ from app.memory import (
     tidy_memories,
     upsert_memories,
 )
+from app.memory.text import unfinished_items
 from app.memory.initiative import build_disclosure_plan
 from app.memory.schema import make_memory
 from app.memory.semantic import semantic_similarity, semantic_vector
@@ -453,6 +454,13 @@ def test_expanded_task_words_extract_goal() -> None:
     memories = extract_memory_candidates("后天上午要答辩，还得复习。")
 
     assert any(memory["type"] == "goal" and memory.get("due_at") for memory in memories)
+
+
+def test_numeric_date_task_extracts_goal() -> None:
+    memories = extract_memory_candidates("7/8 15:00要面试，今晚得准备自我介绍。")
+
+    assert any(memory["type"] == "goal" and memory.get("due_at") for memory in memories)
+    assert unfinished_items("7/8 15:00要面试，今晚得准备自我介绍。")
 
 
 def test_short_new_slang_emotion_is_high_density() -> None:

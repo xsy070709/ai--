@@ -39,7 +39,7 @@ def has_deletion_signal(text: str) -> bool:
 
 
 def has_time_signal(text: str) -> bool:
-    return contains_any(text, PARAMS.signals.time_words)
+    return contains_any(text, PARAMS.signals.time_words) or bool(_NUMERIC_TIME_RE.search(text))
 
 
 def has_task_signal(text: str) -> bool:
@@ -93,3 +93,6 @@ def _mostly_filler(text: str) -> bool:
         return True
     repeated = re.sub(r"(哈|啊|嗯|哦|嘿|hh|哈)+", "", compact)
     return len(repeated) <= max(1, len(compact) // 4)
+
+
+_NUMERIC_TIME_RE = re.compile(r"\d{1,2}[/-]\d{1,2}|\d{1,2}[点:：]\d{0,2}|周[一二三四五六日天]")
