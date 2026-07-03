@@ -183,6 +183,28 @@ def test_memory_params_can_be_overridden_from_file(tmp_path) -> None:
     assert params.recall.cooldown_penalty == 1.20
 
 
+def test_memory_params_reject_unknown_override_keys(tmp_path) -> None:
+    params_file = tmp_path / "memory_params.json"
+    params_file.write_text('{"recall":{"open_item_bouns":0.9}}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="recall\\.open_item_bouns"):
+        memory_params_from_file(params_file)
+
+
+def test_default_memory_params_warn_and_fallback_for_bad_env_file(tmp_path) -> None:
+    from app.memory.params import _default_memory_params_from_environment
+
+    missing_file = tmp_path / "missing.json"
+    profile, params, warnings = _default_memory_params_from_environment(
+        {"MEMORY_PARAM_PROFILE": "proactive", "MEMORY_PARAMS_FILE": str(missing_file)}
+    )
+
+    assert profile == "proactive"
+    assert params.recall.open_item_bonus == memory_params_for_profile("proactive").recall.open_item_bonus
+    assert warnings
+    assert "MEMORY_PARAMS_FILE ignored" in warnings[0]
+
+
 def test_memory_params_explain_high_impact_knobs() -> None:
     description = PARAMETER_DESCRIPTIONS["recall.open_item_bonus"]
 
@@ -1112,6 +1134,7 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     assert service.messages()[-1]["role"] == "assistant"
     assert service.status()["layers"]["persona"]["count"] == 1
     assert service.status()["profile"]["preferences"]
+    assert service.status()["memory_params"]["warnings"] == []
     logs = service.store.snapshot()["generation_logs"]
     assert "当前真实时间" in logs[-1]["api_messages"][3]["content"]
     assert logs[-1]["prompt_manifest"]["time_context"]["date"]

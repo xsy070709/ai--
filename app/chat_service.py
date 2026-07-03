@@ -29,6 +29,7 @@ from .memory import (
     work_memory,
     DEFAULT_MEMORY_PARAMS,
     DEFAULT_MEMORY_PROFILE,
+    PARAMETER_LOAD_WARNINGS,
 )
 from .persona import active_persona_text, initialize_persona
 from .storage import StorageBackend, new_id, now_iso
@@ -66,7 +67,7 @@ class ChatService:
                 "configured": self.gateway.settings.has_deepseek_key,
                 "model": self.gateway.settings.deepseek_chat_model,
             },
-            "memory_params": {"profile": DEFAULT_MEMORY_PROFILE},
+            "memory_params": {"profile": DEFAULT_MEMORY_PROFILE, "warnings": PARAMETER_LOAD_WARNINGS},
             "time": current_time_context(),
         }
 

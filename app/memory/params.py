@@ -281,28 +281,53 @@ def memory_params_for_profile(profile: str = "balanced") -> MemoryParams:
 
 def memory_params_from_file(path: str | Path, profile: str = "balanced") -> MemoryParams:
     params = memory_params_for_profile(profile)
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Cannot read memory params file {path}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in memory params file {path}: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Memory params file {path} must contain a JSON object")
     return _apply_overrides(params, data)
 
 
-def _apply_overrides(instance: Any, overrides: dict[str, Any]) -> Any:
+def _apply_overrides(instance: Any, overrides: dict[str, Any], prefix: str = "") -> Any:
     if not is_dataclass(instance):
         return instance
     known = {field.name for field in fields(instance)}
     changes = {}
     for key, value in overrides.items():
         if key not in known:
-            continue
+            dotted = f"{prefix}.{key}" if prefix else key
+            raise ValueError(f"Unknown memory parameter override: {dotted}")
         current = getattr(instance, key)
-        if is_dataclass(current) and isinstance(value, dict):
-            changes[key] = _apply_overrides(current, value)
+        dotted = f"{prefix}.{key}" if prefix else key
+        if is_dataclass(current):
+            if not isinstance(value, dict):
+                raise ValueError(f"Memory parameter override {dotted} must be a JSON object")
+            changes[key] = _apply_overrides(current, value, dotted)
+        elif isinstance(value, dict):
+            raise ValueError(f"Memory parameter override {dotted} must be a scalar or array value")
+        elif isinstance(current, tuple) and isinstance(value, list):
+            changes[key] = tuple(value)
         else:
             changes[key] = value
     return replace(instance, **changes)
 
 
-DEFAULT_MEMORY_PROFILE = os.getenv("MEMORY_PARAM_PROFILE", "balanced").lower()
-if os.getenv("MEMORY_PARAMS_FILE"):
-    DEFAULT_MEMORY_PARAMS = memory_params_from_file(os.environ["MEMORY_PARAMS_FILE"], DEFAULT_MEMORY_PROFILE)
-else:
-    DEFAULT_MEMORY_PARAMS = memory_params_for_profile(DEFAULT_MEMORY_PROFILE)
+def _default_memory_params_from_environment(environ: os._Environ[str] | dict[str, str]) -> tuple[str, MemoryParams, list[str]]:
+    profile = environ.get("MEMORY_PARAM_PROFILE", "balanced").lower()
+    params_file = environ.get("MEMORY_PARAMS_FILE")
+    if not params_file:
+        return profile, memory_params_for_profile(profile), []
+    try:
+        return profile, memory_params_from_file(params_file, profile), []
+    except ValueError as exc:
+        warning = f"MEMORY_PARAMS_FILE ignored; using {profile} profile: {exc}"
+        return profile, memory_params_for_profile(profile), [warning]
+
+
+DEFAULT_MEMORY_PROFILE, DEFAULT_MEMORY_PARAMS, PARAMETER_LOAD_WARNINGS = _default_memory_params_from_environment(os.environ)
