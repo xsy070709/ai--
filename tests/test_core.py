@@ -604,16 +604,26 @@ def test_memory_context_uses_intent_followup_invitation() -> None:
     assert disclosure["mode"] == "can_mention"
 
 
-def test_elapsed_open_loop_can_be_followed_up_during_casual_chat() -> None:
+def test_elapsed_open_loop_stays_quiet_during_low_density_casual_chat() -> None:
     memory = make_memory("goal", "待跟进：明天中午要汇报材料", 0.8, False, "明天中午要汇报材料", open_item=True)
     memory["created_at"] = "2026-07-01T10:00:00+08:00"
     memory["evidence"][0]["created_at"] = "2026-07-01T10:00:00+08:00"
 
     context = build_memory_context([memory], "下午好呀", now="2026-07-02T15:30:00+08:00")
 
-    assert context["followup_plan"]["mode"] == "elapsed_casual_follow_up"
+    assert context["followup_plan"]["mode"] == "none"
+    assert "不要主动翻旧账" in context["prompt_text"]
+
+
+def test_elapsed_open_loop_can_be_followed_up_when_user_invites_old_topic() -> None:
+    memory = make_memory("goal", "待跟进：明天中午要汇报材料", 0.8, False, "明天中午要汇报材料", open_item=True)
+    memory["created_at"] = "2026-07-01T10:00:00+08:00"
+    memory["evidence"][0]["created_at"] = "2026-07-01T10:00:00+08:00"
+
+    context = build_memory_context([memory], "继续上次那个汇报", now="2026-07-02T15:30:00+08:00")
+
+    assert context["followup_plan"]["mode"] == "elapsed_follow_up"
     assert context["followup_plan"]["items"][0]["time_state"] == "elapsed"
-    assert "time_state=elapsed" in context["prompt_text"]
 
 
 def test_relationship_and_shared_memory_shape_human_context() -> None:

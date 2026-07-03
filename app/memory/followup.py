@@ -61,17 +61,12 @@ def build_followup_plan(
     open_recalled = [annotate_time_state(memory, now) if memory.get("type") == "goal" else memory for memory in recalled if memory.get("open")]
     elapsed_recalled = [memory for memory in open_recalled if memory.get("time_state") == "elapsed"]
     casual_chat = _looks_like_casual_chat(user_text, intent)
+    invited = bool(intent and intent.get("has_followup_invitation")) or any(word in user_text for word in ["继续", "后来", "上次", "还记得"])
     if elapsed_recalled and not casual_chat:
         return {
             "mode": "elapsed_follow_up",
             "items": elapsed_recalled[:1],
             "instruction": "待跟进事项的约定时间已过，可以像朋友一样轻问结果；不要假装已经知道结果。",
-        }
-    if elapsed_recalled and casual_chat:
-        return {
-            "mode": "elapsed_casual_follow_up",
-            "items": elapsed_recalled[:1],
-            "instruction": "用户在闲聊，且旧事项时间已过；可以顺口轻问一句结果，也可以先接当前闲聊，不要连环追问。",
         }
     if open_recalled and not casual_chat:
         return {
@@ -79,20 +74,10 @@ def build_followup_plan(
             "items": open_recalled[: PARAMS.followup_item_limit],
             "instruction": "可以自然轻问待跟进事项，但只问一个点，不要像任务管理器。",
         }
+    if casual_chat and not invited:
+        return {"mode": "none", "items": [], "instruction": "用户只是在低密度闲聊，不要主动翻旧账。"}
 
     open_profile = profile.get("open_loops", [])
-    elapsed_profile = [
-        annotate_time_state(memory, now) if memory.get("type") == "goal" else memory
-        for memory in open_profile
-        if memory.get("time_state") == "elapsed" or annotate_time_state(memory, now).get("time_state") == "elapsed"
-    ]
-    if elapsed_profile and casual_chat:
-        return {
-            "mode": "elapsed_casual_follow_up",
-            "items": elapsed_profile[:1],
-            "instruction": "用户在闲聊，且旧事项时间已过；可以顺口轻问一句结果，也可以先接当前闲聊，不要连环追问。",
-        }
-    invited = bool(intent and intent.get("has_followup_invitation")) or any(word in user_text for word in ["继续", "后来", "上次", "还记得"])
     if open_profile and invited:
         return {
             "mode": "user_invited_follow_up",
