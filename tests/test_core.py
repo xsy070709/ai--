@@ -996,6 +996,26 @@ def test_chat_service_memories_uses_projection_interface(tmp_path) -> None:
     assert service.memories()[0]["content"] == "用户喜欢安静一点的回复"
 
 
+def test_chat_service_debug_uses_generation_log_projection(tmp_path) -> None:
+    class ProjectionLogStore(JsonStore):
+        def list_generation_logs(self, limit: int | None = None, purpose: str | None = None):
+            return [{"id": "log_projection", "purpose": "chat", "created_at": "2026-07-03T10:00:00+08:00"}]
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(ProjectionLogStore(settings), DeepSeekGateway(settings))
+
+    debug = service.debug_snapshot()
+
+    assert debug["generation_logs"][0]["id"] == "log_projection"
+
+
 def test_chat_service_uses_storage_search_for_recall_candidates(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
@@ -1209,6 +1229,33 @@ def test_sqlite_lists_memories_from_projection(tmp_path) -> None:
     active = store.list_memories(status="active")
     assert len(active) == 1
     assert active[0]["content"] == "用户喜欢安静一点的回复"
+
+
+def test_sqlite_lists_generation_logs_from_projection(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("generation_logs", []).extend(
+            [
+                {"id": "log_1", "purpose": "chat", "created_at": "2026-07-03T10:00:00+08:00"},
+                {"id": "log_2", "purpose": "memory_extract", "created_at": "2026-07-03T10:01:00+08:00"},
+                {"id": "log_3", "purpose": "chat", "created_at": "2026-07-03T10:02:00+08:00"},
+            ]
+        )
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert [log["id"] for log in store.list_generation_logs(limit=2)] == ["log_2", "log_3"]
+    assert [log["id"] for log in store.list_generation_logs(purpose="chat")] == ["log_1", "log_3"]
 
 
 def test_sqlite_search_falls_back_to_semantic_match(tmp_path) -> None:

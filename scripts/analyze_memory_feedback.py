@@ -15,8 +15,8 @@ from app.storage import create_store
 
 def main() -> None:
     settings = load_settings()
-    state = create_store(settings).snapshot()
-    report = analyze_feedback(state.get("generation_logs", []))
+    store = create_store(settings)
+    report = analyze_feedback(store.list_generation_logs())
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

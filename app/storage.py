@@ -60,6 +60,9 @@ class StorageBackend(Protocol):
     def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
         ...
 
+    def list_generation_logs(self, limit: int | None = None, purpose: str | None = None) -> list[dict[str, Any]]:
+        ...
+
 
 class JsonStore:
     def __init__(self, settings: Settings) -> None:
@@ -139,6 +142,14 @@ class JsonStore:
         if status is None:
             return memories
         return [memory for memory in memories if memory.get("status") == status]
+
+    def list_generation_logs(self, limit: int | None = None, purpose: str | None = None) -> list[dict[str, Any]]:
+        logs = self.snapshot().get("generation_logs", [])
+        if purpose is not None:
+            logs = [log for log in logs if log.get("purpose") == purpose]
+        if limit is not None:
+            return logs[-limit:]
+        return logs
 
 
 class SqliteStore:
@@ -384,6 +395,22 @@ class SqliteStore:
                     (status,),
                 ).fetchall()
         return [json.loads(row["full_json"]) for row in rows]
+
+    def list_generation_logs(self, limit: int | None = None, purpose: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT full_json FROM generation_logs"
+        params: list[Any] = []
+        if purpose is not None:
+            query += " WHERE purpose = ?"
+            params.append(purpose)
+        query += " ORDER BY created_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        logs = [json.loads(row["full_json"]) for row in rows]
+        logs.reverse()
+        return logs
 
 
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:

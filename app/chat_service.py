@@ -75,7 +75,7 @@ class ChatService:
         for memory in memories:
             grouped_memories.setdefault(memory.get("type", "unknown"), []).append(memory)
         session = state["sessions"][state["active_session_id"]]
-        generation_logs = state.get("generation_logs", [])[-80:]
+        generation_logs = self.store.list_generation_logs(limit=80)
         api_requests = self.gateway.debug_requests()
         return {
             "session": {
