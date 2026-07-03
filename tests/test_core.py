@@ -232,6 +232,9 @@ def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     suggestions = {item["parameter"]: item["direction"] for item in report["suggestions"]}
     assert suggestions["recall.open_item_bonus"] == "decrease"
     assert suggestions["quality.auto_accept_min_confidence"] == "increase"
+    assert report["parameter_evidence"]["recall.open_item_bonus"]["negative"] == 2
+    assert report["parameter_evidence"]["quality.auto_accept_min_confidence"]["negative"] == 2
+    assert report["parameter_evidence"]["recall.cooldown_penalty"]["signals"]["followup_topic_shift"] == 2
 
     conservative_report = analyze_feedback(
         [
@@ -242,6 +245,7 @@ def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     )
     conservative_suggestions = {item["parameter"]: item["direction"] for item in conservative_report["suggestions"]}
     assert conservative_suggestions["quality.auto_accept_min_confidence"] == "decrease"
+    assert conservative_report["parameter_evidence"]["quality.auto_accept_min_confidence"]["positive"] == 3
 
 
 def test_memory_calibration_cases_pass_current_baseline() -> None:

@@ -10,6 +10,36 @@ from .text import topics_from_text
 
 PARAMS = DEFAULT_MEMORY_PARAMS
 
+POSITIVE_SIGNALS = {
+    "followup_resolved",
+    "followup_engaged",
+    "open_loop_closed",
+    "user_invited_recall",
+    "disclosure_engaged",
+    "confirmation_accepted",
+}
+NEGATIVE_SIGNALS = {
+    "followup_topic_shift",
+    "memory_correction",
+    "memory_surface_issue",
+    "disclosure_not_engaged",
+    "confirmation_rejected",
+}
+SIGNAL_PARAMETERS = {
+    "followup_resolved": ["recall.open_item_bonus"],
+    "followup_engaged": ["recall.open_item_bonus"],
+    "followup_topic_shift": ["recall.open_item_bonus", "recall.cooldown_penalty"],
+    "memory_correction": ["quality.auto_accept_min_confidence"],
+    "confirmation_requested": ["quality.auto_accept_min_confidence"],
+    "confirmation_accepted": ["quality.auto_accept_min_confidence"],
+    "confirmation_rejected": ["quality.auto_accept_min_confidence"],
+    "open_loop_closed": ["recall.open_item_bonus"],
+    "user_invited_recall": ["maintenance.cooldown_use_threshold", "recall.cooldown_penalty"],
+    "memory_surface_issue": ["disclosure.mention_recall_threshold"],
+    "disclosure_not_engaged": ["disclosure.mention_recall_threshold"],
+    "disclosure_engaged": ["disclosure.mention_recall_threshold"],
+}
+
 
 def infer_feedback_signals(
     user_text: str,
@@ -55,6 +85,7 @@ def infer_feedback_signals(
 def analyze_feedback(logs: list[dict[str, Any]]) -> dict[str, Any]:
     signals = [signal for log in logs for signal in log.get("feedback_signals", [])]
     counts = Counter(signal.get("type", "unknown") for signal in signals)
+    parameter_evidence = _parameter_evidence(signals)
     suggestions = []
 
     if counts["followup_topic_shift"] > counts["followup_engaged"] + counts["followup_resolved"]:
@@ -110,8 +141,37 @@ def analyze_feedback(logs: list[dict[str, Any]]) -> dict[str, Any]:
         "total_logs": len(logs),
         "total_signals": len(signals),
         "signal_counts": dict(counts),
+        "parameter_evidence": parameter_evidence,
         "suggestions": suggestions,
     }
+
+
+def _parameter_evidence(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    evidence: dict[str, dict[str, Any]] = {}
+    for signal in signals:
+        signal_type = signal.get("type", "unknown")
+        parameters = signal.get("parameters") or SIGNAL_PARAMETERS.get(signal_type, [])
+        for parameter in parameters:
+            item = evidence.setdefault(
+                parameter,
+                {
+                    "total": 0,
+                    "positive": 0,
+                    "negative": 0,
+                    "signals": {},
+                    "reasons": [],
+                },
+            )
+            item["total"] += 1
+            if signal_type in POSITIVE_SIGNALS:
+                item["positive"] += 1
+            if signal_type in NEGATIVE_SIGNALS:
+                item["negative"] += 1
+            item["signals"][signal_type] = item["signals"].get(signal_type, 0) + 1
+            reason = signal.get("reason")
+            if reason and reason not in item["reasons"]:
+                item["reasons"].append(reason)
+    return evidence
 
 
 def _signal(signal_type: str, reason: str, parameters: list[str]) -> dict[str, Any]:

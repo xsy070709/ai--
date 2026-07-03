@@ -104,7 +104,7 @@ SQLite 后端会维护 `memory_fts` 和 `memory_embeddings` 投影表。当前 e
 python scripts/analyze_memory_feedback.py
 ```
 
-输出包含信号计数和建议调整方向，例如降低待跟进加分、提高自动接受阈值或提高记忆表露阈值。
+输出包含信号计数、按参数聚合的证据和建议调整方向，例如降低待跟进加分、提高自动接受阈值或提高记忆表露阈值。
 
 运行记忆校准样例集：
 
