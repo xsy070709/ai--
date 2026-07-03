@@ -1003,7 +1003,9 @@ def test_sqlite_search_falls_back_to_semantic_match(tmp_path) -> None:
     store = SqliteStore(settings)
 
     def mutate(state):
-        state.setdefault("memories", []).append(make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠"))
+        state.setdefault("memories", []).append(
+            make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠")
+        )
         return "ok"
 
     assert store.mutate(mutate) == "ok"
@@ -1051,6 +1053,26 @@ def test_create_store_uses_configured_backend(tmp_path) -> None:
     )
 
     assert isinstance(create_store(settings), SqliteStore)
+
+
+def test_json_store_exposes_memory_search_backend_interface(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    store = create_store(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).append(make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠"))
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert store.search_memories("失眠")
+    assert store.search_memories("我最近睡不好")
 
 
 def test_migrate_json_to_sqlite_keeps_json_backup_and_imports_state(tmp_path) -> None:

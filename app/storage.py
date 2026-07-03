@@ -51,6 +51,12 @@ class StorageBackend(Protocol):
     def session(self, session_id: str = "default") -> dict[str, Any]:
         ...
 
+    def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        ...
+
+    def search_memories_semantic(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        ...
+
 
 class JsonStore:
     def __init__(self, settings: Settings) -> None:
@@ -89,6 +95,41 @@ class JsonStore:
         state = self.snapshot()
         sessions = state.setdefault("sessions", {})
         return sessions.get(session_id) or sessions[state["active_session_id"]]
+
+    def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        memories = [
+            memory
+            for memory in self.snapshot().get("memories", [])
+            if memory.get("status") == "active" and query in memory.get("content", "")
+        ]
+        memories.sort(
+            key=lambda memory: (memory.get("importance", 0), memory.get("updated_at", "")),
+            reverse=True,
+        )
+        if len(memories) >= limit:
+            return memories[:limit]
+        seen_ids = {memory.get("id") for memory in memories}
+        for memory in self.search_memories_semantic(query, limit=limit):
+            if memory.get("id") in seen_ids:
+                continue
+            memories.append(memory)
+            seen_ids.add(memory.get("id"))
+            if len(memories) >= limit:
+                break
+        return memories
+
+    def search_memories_semantic(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        from .memory.semantic import cosine_similarity, semantic_vector
+
+        query_vector = semantic_vector(query)
+        scored = []
+        for memory in self.snapshot().get("memories", []):
+            if memory.get("status") != "active":
+                continue
+            vector = semantic_vector(memory.get("content", ""))
+            scored.append((cosine_similarity(query_vector, vector), memory))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [memory for score, memory in scored[:limit] if score > 0]
 
 
 class SqliteStore:
