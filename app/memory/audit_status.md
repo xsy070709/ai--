@@ -25,6 +25,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 - High-density short messages are handled through `signals.information_density()` and extraction tests, so short messages such as emotional events are not treated as casual filler.
 - `turns.py` clusters recent short user fragments into one logical turn for extraction and intent classification.
 - Working memory now scales down for casual chat, expands for deep or continued topics, and starts after the latest summary boundary.
+- Relative and numeric deadline inference validates invalid dates and handles naive datetimes before time-state comparisons.
 
 Remaining risk: this is a practical local semantic layer. It does not yet use external embedding models or learned topic boundaries.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 from app.chat_service import ChatService
 from app.config import Settings
@@ -39,6 +40,7 @@ from app.memory.schema import make_memory
 from app.memory.semantic import semantic_similarity, semantic_vector
 from app.memory.signals import has_followup_invitation, information_density, looks_like_casual_chat
 from app.memory.summary import should_build_session_summary, work_memory
+from app.memory.time_reasoning import annotate_time_state, infer_deadline
 from app.persona import initialize_persona
 from app.storage import JsonStore, SqliteStore, create_store, migrate_json_to_sqlite
 from scripts.evaluate_memory_calibration import exit_code_for_report
@@ -628,6 +630,31 @@ def test_numeric_date_task_extracts_goal() -> None:
 
     assert any(memory["type"] == "goal" and memory.get("due_at") for memory in memories)
     assert unfinished_items("7/8 15:00要面试，今晚得准备自我介绍。")
+
+
+def test_time_reasoning_ignores_invalid_numeric_dates() -> None:
+    deadline = infer_deadline("2/30要交材料", datetime(2026, 1, 1, 9, 0))
+
+    assert deadline is None
+
+
+def test_time_reasoning_falls_back_to_day_month_numeric_dates() -> None:
+    deadline = infer_deadline("13/1要交材料", datetime(2026, 1, 1, 9, 0))
+
+    assert deadline
+    assert deadline["due_at"].startswith("2026-01-13")
+
+
+def test_time_reasoning_handles_naive_datetimes_consistently() -> None:
+    memory = {
+        "type": "goal",
+        "content": "待跟进：今天下午要交材料",
+        "created_at": datetime(2026, 1, 1, 9, 0).isoformat(),
+    }
+
+    annotated = annotate_time_state(memory, now=datetime(2026, 1, 1, 20, 0))
+
+    assert annotated["time_state"] == "elapsed"
 
 
 def test_short_new_slang_emotion_is_high_density() -> None:

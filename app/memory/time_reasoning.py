@@ -24,9 +24,12 @@ def infer_deadline(text: str, reference: datetime | str | None = None) -> dict[s
     else:
         match = re.search(r"(\d{1,2})[/-](\d{1,2})", text)
         if match:
-            month = int(match.group(1))
-            day = int(match.group(2))
-            date = date.replace(month=month, day=day)
+            first = int(match.group(1))
+            second = int(match.group(2))
+            parsed = _month_day_date(date, first, second) or _month_day_date(date, second, first)
+            if not parsed:
+                return None
+            date = parsed
             if date < ref.date():
                 date = date.replace(year=date.year + 1)
             confidence = 0.7
@@ -102,10 +105,28 @@ def _memory_reference_time(memory: dict[str, Any]) -> str | None:
 
 def _coerce_datetime(value: datetime | str | None) -> datetime | None:
     if isinstance(value, datetime):
-        return value.astimezone() if value.tzinfo else value.astimezone()
+        if value.tzinfo:
+            return value.astimezone()
+        return value.replace(tzinfo=_local_timezone()).astimezone()
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value).astimezone()
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo:
+            return parsed.astimezone()
+        return parsed.replace(tzinfo=_local_timezone()).astimezone()
     except ValueError:
         return None
+
+
+def _month_day_date(base: Any, month: int, day: int):
+    if not 1 <= month <= 12 or not 1 <= day <= 31:
+        return None
+    try:
+        return base.replace(month=month, day=day)
+    except ValueError:
+        return None
+
+
+def _local_timezone():
+    return datetime.now().astimezone().tzinfo
