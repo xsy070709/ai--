@@ -14,7 +14,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 | FTS and semantic recall | Partially implemented | `memory_fts`, `memory_embeddings`, `semantic.py`, storage search tests | Semantic vectors are deterministic local fallback vectors, not production embeddings or `sqlite-vec`. |
 | Parameter centralization | MVP implemented | `MemoryParams`, profiles, file overrides, centralized topic/follow-up/audit anchors | Defaults are still hand-tuned until broader calibration data exists. |
 | Feedback and calibration loop | Partially implemented | `feedback.py`, `calibration.py`, `scripts/analyze_memory_feedback.py`, `scripts/evaluate_memory_calibration.py` | Feedback reports evidence, but there is no automatic optimizer or large labeled dataset. |
-| Keyword flexibility and intent | Partially implemented | `StructuredLLMIntentClassifier`, rule fallback, centralized keyword groups | Rule fallback is still keyword-heavy; LLM classifier is optional rather than always-on. |
+| Keyword flexibility and intent | Partially implemented | `StructuredLLMIntentClassifier`, rule fallback, centralized keyword groups and topic aliases | Rule fallback still needs broader phrase coverage; LLM classifier is optional rather than always-on. |
 | Prompt/summary observability | MVP implemented | prompt segments, `prompt_manifest`, `system_segments`, summary boundary fixes | Runtime service restart may still be needed after backend edits in local sessions. |
 
 ## Roadmap Notes
@@ -42,15 +42,15 @@ Remaining risk: the current semantic search is local and deterministic. The long
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
 - Calibration scripts provide a repeatable gate for recall/follow-up/feedback expectations.
 
-Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current nine cases before trusting parameter changes.
+Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current ten cases before trusting parameter changes.
 
 ### 4. Keyword Flexibility And Intent
 
-- Topic words, invitation words, audit anchors, and signal groups are centralized rather than scattered.
+- Topic words, topic aliases, invitation words, audit anchors, and signal groups are centralized rather than scattered.
 - The structured LLM intent path exists and falls back to deterministic rules when unavailable.
 - Rule intent now preserves actual information-density scores instead of flattening them away.
 
-Remaining risk: there is no synonym expansion pipeline, trained classifier, or always-on semantic intent model yet.
+Remaining risk: alias coverage is still curated and small; there is no trained classifier or always-on semantic intent model yet.
 
 ## Verification Gates
 
@@ -61,12 +61,12 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py`
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers nine cases with a perfect score.
+Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers ten cases with a perfect score.
 
 ## Next Iteration Candidates
 
 1. Expand `data/memory_calibration_cases.json` into a larger labeled set, especially around paraphrased corrections, subtle over-disclosure, and repeated follow-up fatigue.
 2. Decide whether to integrate real embeddings plus `sqlite-vec`, or keep the deterministic local semantic fallback for the MVP.
-3. Add a synonym/phrase expansion layer for topic and intent signals.
+3. Broaden the curated synonym/phrase map for topic and intent signals using real chat failures.
 4. Audit remaining full-snapshot profile reads and decide whether any should use narrower storage projections.
 5. Add a local service restart verification step after backend prompt changes when permissions allow it.

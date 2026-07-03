@@ -26,7 +26,18 @@ def topics_from_text(text: str) -> list[str]:
     for keyword in PARAMS.signals.topic_words:
         if keyword in text:
             topics.append(keyword)
+    topics.extend(topic_alias_hits(text))
+    topics = list(dict.fromkeys(topics))
     return topics or ["日常聊天"]
+
+
+def topic_alias_hits(text: str) -> list[str]:
+    lowered = text.lower()
+    hits = []
+    for topic, aliases in PARAMS.signals.topic_aliases:
+        if any(alias.lower() in lowered for alias in aliases):
+            hits.append(topic)
+    return hits
 
 
 def emotion_tags(text: str) -> list[str]:
@@ -37,6 +48,9 @@ def emotion_cause(text: str) -> str:
     for topic in PARAMS.signals.topic_words:
         if topic in text:
             return topic
+    alias_topics = topic_alias_hits(text)
+    if alias_topics:
+        return alias_topics[0]
     return "当前情境"
 
 

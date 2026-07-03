@@ -11,6 +11,12 @@
     "expected_recall_contains": ["失眠"]
   },
   {
+    "name": "alias interview recall",
+    "seed_memories": ["明天面试要准备简历。"],
+    "user_text": "秋招自我介绍还没准备好",
+    "expected_recall_contains": ["面试"]
+  },
+  {
     "name": "long shared agreement is retained",
     "user_text": "我们约定下次继续把项目拆成小任务，然后每次只检查一个最卡住的地方，不要一下子铺开太多细节。",
     "expected_memory_types": ["shared_experience"]

@@ -310,6 +310,7 @@ def test_calibration_cases_can_check_memory_audit() -> None:
 
 def test_semantic_similarity_handles_synonyms_without_token_overlap() -> None:
     assert semantic_similarity("我最近睡不好", "用户最近失眠严重") > 0.2
+    assert semantic_similarity("秋招自我介绍还没准备好", "明天面试要准备简历") > 0.2
     assert len(semantic_vector("我最近睡不好")) == DEFAULT_MEMORY_PARAMS.semantic.vector_dimensions
 
 
@@ -399,6 +400,14 @@ def test_topics_use_configured_topic_words() -> None:
     assert "实习" in topics_from_text("实习答辩材料还没准备好")
     assert "答辩" in intent["topics"]
     assert emotion_cause("实习压力有点大") == "实习"
+
+
+def test_topics_use_configured_alias_words() -> None:
+    intent = RuleBasedIntentClassifier().classify("秋招自我介绍还没准备好")
+
+    assert "面试" in topics_from_text("秋招自我介绍还没准备好")
+    assert "面试" in intent["topics"]
+    assert emotion_cause("毕设压力有点大") == "论文"
 
 
 def test_structured_llm_intent_classifier_maps_json() -> None:

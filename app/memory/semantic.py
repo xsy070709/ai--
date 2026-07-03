@@ -5,10 +5,10 @@ import math
 
 from .params import DEFAULT_MEMORY_PARAMS
 from .signals import emotion_tags_for
-from .text import tokens, topics_from_text
+from .text import topic_alias_hits, tokens, topics_from_text
 
 
-PARAMS = DEFAULT_MEMORY_PARAMS.semantic
+PARAMS = DEFAULT_MEMORY_PARAMS
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "sleep_problem": ("睡不好", "睡不着", "失眠", "熬夜", "睡眠差", "睡眠不好", "睡眠"),
@@ -21,7 +21,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def semantic_vector(text: str, dimensions: int = PARAMS.vector_dimensions) -> list[float]:
+def semantic_vector(text: str, dimensions: int = PARAMS.semantic.vector_dimensions) -> list[float]:
     vector = [0.0 for _ in range(dimensions)]
     for term, weight in semantic_terms(text):
         index = _stable_index(term, dimensions)
@@ -50,6 +50,8 @@ def semantic_terms(text: str) -> list[tuple[str, float]]:
     for topic in topics_from_text(text):
         if topic != "日常聊天":
             terms.append((f"topic:{topic}", 1.2))
+    for topic in topic_alias_hits(text):
+        terms.append((f"topic_alias:{topic}", 1.6))
     for emotion in emotion_tags_for(text):
         terms.append((f"emotion:{emotion}", 1.25))
     for concept, words in ALIASES.items():
