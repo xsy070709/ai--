@@ -1777,6 +1777,53 @@ def test_sqlite_search_fills_exact_results_with_semantic_matches(tmp_path) -> No
     assert any("失眠" in content for content in contents)
 
 
+def test_sqlite_search_treats_like_wildcards_as_literals(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).extend(
+            [
+                make_memory("fact", "进度是100%完成", 0.8, False, "进度"),
+                make_memory("fact", "进度是1000完成", 0.8, False, "进度"),
+            ]
+        )
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    contents = [memory["content"] for memory in store.search_memories("%")]
+
+    assert contents == ["进度是100%完成"]
+
+
+def test_sqlite_search_ignores_fts_operator_only_queries(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).append(make_memory("fact", "普通记忆内容", 0.8, False, "普通"))
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert store.search_memories("***") == []
+
+
 def test_create_store_uses_configured_backend(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,

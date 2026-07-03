@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from copy import deepcopy
@@ -336,11 +337,11 @@ class SqliteStore:
                     """
                     SELECT full_json
                     FROM memories
-                    WHERE status = 'active' AND content LIKE ?
+                    WHERE status = 'active' AND content LIKE ? ESCAPE '\\'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
-                    (f"%{query}%", limit),
+                    (_like_contains_pattern(query), limit),
                 ).fetchall()
         memories = [json.loads(row["full_json"]) for row in rows]
         if len(memories) >= limit:
@@ -359,6 +360,7 @@ class SqliteStore:
         from .memory.semantic import cosine_similarity, semantic_vector
 
         query_vector = semantic_vector(query)
+        candidate_limit = max(limit * 16, 256)
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -366,7 +368,10 @@ class SqliteStore:
                 FROM memory_embeddings
                 JOIN memories ON memories.id = memory_embeddings.memory_id
                 WHERE memories.status = 'active'
-                """
+                ORDER BY memories.importance DESC, memories.updated_at DESC
+                LIMIT ?
+                """,
+                (candidate_limit,),
             ).fetchall()
         scored = []
         for row in rows:
@@ -602,10 +607,19 @@ def _delete_missing_projection_rows(db: sqlite3.Connection, table: str, key: str
 
 
 def _fts_query(query: str) -> str:
-    terms = [term.replace('"', "") for term in query.split() if term.strip()]
+    terms = []
+    for raw_term in query.split():
+        term = re.sub(r"[^\w]+", "", raw_term.strip(), flags=re.UNICODE).replace('"', '""')
+        if term:
+            terms.append(term)
     if not terms:
         return ""
     return " OR ".join(f'"{term}"' for term in terms)
+
+
+def _like_contains_pattern(query: str) -> str:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def migrate_json_to_sqlite(settings: Settings, *, overwrite: bool = False) -> Path:
