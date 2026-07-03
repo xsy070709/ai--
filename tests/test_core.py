@@ -352,6 +352,38 @@ def test_calibration_cases_can_check_absent_outputs() -> None:
     assert report["results"][1]["checks"]["unexpected_feedback_signals"] is False
 
 
+def test_calibration_cases_can_check_correction_results() -> None:
+    report = evaluate_calibration_cases(
+        [
+            {
+                "name": "paraphrased correction mutates memory",
+                "seed_memories": ["明天周三下午要面试。"],
+                "user_text": "不是周三，是周五下午面试",
+                "expected_corrected_contains": ["周三"],
+                "expected_created_memory_types": ["goal"],
+            },
+            {
+                "name": "delete correction mutates memory",
+                "seed_memories": ["记住我喜欢深夜复盘"],
+                "user_text": "这条别存了，深夜复盘那个",
+                "intent": {
+                    "has_correction_intent": True,
+                    "correction_action": "delete",
+                    "correction_query": "深夜复盘",
+                },
+                "expected_deleted_contains": ["深夜复盘"],
+                "unexpected_created_memory_types": ["goal"],
+            },
+        ]
+    )
+
+    assert report["score"] == 1.0
+    assert report["results"][0]["checks"]["corrected_memories"] is True
+    assert report["results"][0]["checks"]["created_memory_types"] is True
+    assert report["results"][1]["checks"]["deleted_memories"] is True
+    assert report["results"][1]["checks"]["unexpected_created_memory_types"] is True
+
+
 def test_semantic_similarity_handles_synonyms_without_token_overlap() -> None:
     assert semantic_similarity("我最近睡不好", "用户最近失眠严重") > 0.2
     assert semantic_similarity("秋招自我介绍还没准备好", "明天面试要准备简历") > 0.2

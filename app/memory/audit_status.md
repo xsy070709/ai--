@@ -41,10 +41,10 @@ Remaining risk: the current semantic search is local and deterministic. Write-si
 
 - Tunable memory behavior is centralized in `MemoryParams`, with profiles and config-file overrides.
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
-- Calibration scripts provide an automation-friendly gate for positive and negative recall/follow-up/feedback expectations.
+- Calibration scripts provide an automation-friendly gate for positive and negative recall/follow-up/feedback/correction expectations.
 - Feedback analysis now includes parameter metadata with current values, sensitivity, safe ranges, and expected adjustment effects for high-impact knobs.
 
-Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current thirteen cases before trusting parameter changes.
+Remaining risk: calibration coverage is still small. The labeled baseline now covers eighteen cases, including correction mutation and disclosure engagement, but it is still below the 50-100 case target from the roadmap.
 
 ### 4. Keyword Flexibility And Intent
 
@@ -63,11 +63,11 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py` (exits non-zero when any case fails)
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers thirteen cases with a perfect score.
+Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers eighteen cases with a perfect score.
 
 ## Next Iteration Candidates
 
-1. Expand `data/memory_calibration_cases.json` into a larger labeled set, especially around paraphrased corrections, subtle over-disclosure, and repeated follow-up fatigue.
+1. Continue expanding `data/memory_calibration_cases.json` toward 50-100 labeled cases, especially around subtle over-disclosure, mixed-language intent, and repeated follow-up fatigue.
 2. Decide whether to integrate real embeddings plus `sqlite-vec`, or keep the deterministic local semantic fallback for the MVP.
 3. Broaden the curated synonym/phrase map for topic and intent signals using real chat failures.
 4. Continue narrowing full-snapshot reads where mutation semantics do not require the whole JSON-compatible state.

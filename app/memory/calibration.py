@@ -4,6 +4,7 @@ from typing import Any
 
 from .audit import audit_memory_use
 from .context import build_memory_context
+from .correction import apply_user_corrections
 from .extraction import extract_memory_candidates
 from .feedback import infer_feedback_signals
 from .lifecycle import upsert_memories
@@ -44,6 +45,14 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     expected_audit_issues = set(case.get("expected_audit_issues", []))
     unexpected_audit_issues = set(case.get("unexpected_audit_issues", []))
     audit_issue_types = {issue["type"] for issue in memory_audit.get("issues", [])} if memory_audit else set()
+    correction_result = apply_user_corrections(memories, case.get("user_text", ""), intent=intent)
+    corrected_contents = [memory.get("content", "") for memory in correction_result["corrected"]]
+    deleted_contents = [memory.get("content", "") for memory in correction_result["deleted"]]
+    created_types = {memory.get("type", "") for memory in correction_result["created"]}
+    expected_corrected = case.get("expected_corrected_contains", [])
+    expected_deleted = case.get("expected_deleted_contains", [])
+    expected_created_types = set(case.get("expected_created_memory_types", []))
+    unexpected_created_types = set(case.get("unexpected_created_memory_types", []))
     previous_log = case.get("previous_log")
     current_manifest = dict(case.get("current_manifest", {}))
     if intent and "intent" not in current_manifest:
@@ -69,6 +78,10 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "memory_audit_status": expected_audit_status is None or bool(memory_audit and memory_audit["status"] == expected_audit_status),
         "memory_audit_issues": expected_audit_issues <= audit_issue_types,
         "unexpected_audit_issues": audit_issue_types.isdisjoint(unexpected_audit_issues),
+        "corrected_memories": all(any(fragment in content for content in corrected_contents) for fragment in expected_corrected),
+        "deleted_memories": all(any(fragment in content for content in deleted_contents) for fragment in expected_deleted),
+        "created_memory_types": expected_created_types <= created_types,
+        "unexpected_created_memory_types": created_types.isdisjoint(unexpected_created_types),
         "feedback_signals": expected_feedback_signals <= feedback_signal_types,
         "unexpected_feedback_signals": feedback_signal_types.isdisjoint(unexpected_feedback_signals),
     }
@@ -81,5 +94,10 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "disclosure_mode": context["disclosure_plan"]["mode"],
         "followup_mode": context["followup_plan"]["mode"],
         "memory_audit": memory_audit,
+        "corrections": {
+            "corrected": corrected_contents,
+            "deleted": deleted_contents,
+            "created_types": sorted(created_types),
+        },
         "feedback_signals": sorted(feedback_signal_types),
     }

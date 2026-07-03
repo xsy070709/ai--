@@ -83,7 +83,7 @@ def infer_feedback_signals(
     if previous_manifest.get("disclosure_mode") == "can_mention":
         if _looks_like_casual_chat(user_text, intent) or _topic_shifted(user_text, previous_manifest, intent):
             signals.append(_signal("disclosure_not_engaged", "AI 表露记忆后用户没有接续相关话题", ["disclosure.mention_recall_threshold"]))
-        elif _is_high_density(user_text, intent):
+        elif _is_high_density(user_text, intent) or _topic_continues(user_text, previous_manifest, intent):
             signals.append(_signal("disclosure_engaged", "AI 表露记忆后用户继续深入回应", ["disclosure.mention_recall_threshold"]))
 
     return _dedupe_signals(signals)
@@ -190,6 +190,8 @@ def _signal(signal_type: str, reason: str, parameters: list[str]) -> dict[str, A
 def _topic_continues(user_text: str, manifest: dict[str, Any], intent: dict[str, Any] | None = None) -> bool:
     reasons = " ".join(str(value) for value in manifest.get("used_memory_reasons", {}).values())
     if has_time_signal(user_text) or has_task_signal(user_text):
+        return True
+    if _has_followup_invitation(user_text, intent) and not _looks_like_casual_chat(user_text, intent):
         return True
     intent_topics = {str(topic) for topic in (intent or {}).get("topics", [])}
     user_topics = intent_topics or set(topics_from_text(user_text))

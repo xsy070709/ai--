@@ -95,6 +95,8 @@ def infer_type(content: str) -> str:
         return "response_rule"
     if any(word in content for word in ["明天", "今晚", "下周", "目标", "计划", "要做", "材料"]):
         return "goal"
+    if has_time_signal(content) and has_task_signal(content):
+        return "goal"
     return "fact"
 
 
