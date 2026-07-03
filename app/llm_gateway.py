@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,8 @@ class LLMResult:
 class DeepSeekGateway:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._structured_cache: dict[str, LLMResult] = {}
+        self._request_log: list[dict[str, Any]] = []
 
     async def chat(self, messages: list[dict[str, str]], purpose: str = "chat") -> LLMResult:
         started = time.perf_counter()
@@ -31,12 +34,7 @@ class DeepSeekGateway:
             return self._fallback(messages, started, "missing DEEPSEEK_API_KEY")
 
         url = f"{self.settings.deepseek_api_base_url}/chat/completions"
-        payload = {
-            "model": self.settings.deepseek_chat_model,
-            "messages": messages,
-            "temperature": 0.8,
-            "stream": False,
-        }
+        payload = self._payload(messages, purpose=purpose, structured=False)
         headers = {"Authorization": f"Bearer {self.settings.deepseek_api_key}"}
 
         last_error: str | None = None
@@ -47,18 +45,22 @@ class DeepSeekGateway:
                     response.raise_for_status()
                 data = response.json()
                 text = data["choices"][0]["message"]["content"].strip()
-                return LLMResult(
+                result = LLMResult(
                     text=text,
                     provider="deepseek",
-                    model=self.settings.deepseek_chat_model,
+                    model=payload["model"],
                     degraded=False,
                     elapsed_ms=int((time.perf_counter() - started) * 1000),
-                    usage=data.get("usage"),
+                    usage=self._usage(data),
                 )
+                self._record_request(purpose, payload, result)
+                return result
             except Exception as exc:  # noqa: BLE001 - preserve provider error for log
                 last_error = str(exc)
 
-        return self._fallback(messages, started, last_error or "provider call failed")
+        result = self._fallback(messages, started, last_error or "provider call failed")
+        self._record_request(purpose, payload, result)
+        return result
 
     async def structured(self, messages: list[dict[str, str]], purpose: str = "structured") -> LLMResult:
         started = time.perf_counter()
@@ -74,13 +76,15 @@ class DeepSeekGateway:
             )
 
         url = f"{self.settings.deepseek_api_base_url}/chat/completions"
-        payload = {
-            "model": self.settings.deepseek_chat_model,
-            "messages": messages,
-            "temperature": 0.1,
-            "stream": False,
-            "response_format": {"type": "json_object"},
-        }
+        payload = self._payload(messages, purpose=purpose, structured=True)
+        cache_key = self._structured_cache_key(payload)
+        if cache_key in self._structured_cache:
+            cached = deepcopy(self._structured_cache[cache_key])
+            cached.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            cached.usage = dict(cached.usage or {})
+            cached.usage["client_cache_hit"] = True
+            self._record_request(purpose, payload, cached, client_cache_hit=True)
+            return cached
         headers = {"Authorization": f"Bearer {self.settings.deepseek_api_key}"}
 
         last_error: str | None = None
@@ -92,18 +96,21 @@ class DeepSeekGateway:
                 data = response.json()
                 text = data["choices"][0]["message"]["content"].strip()
                 json.loads(text)
-                return LLMResult(
+                result = LLMResult(
                     text=text,
                     provider="deepseek",
-                    model=self.settings.deepseek_chat_model,
+                    model=payload["model"],
                     degraded=False,
                     elapsed_ms=int((time.perf_counter() - started) * 1000),
-                    usage=data.get("usage"),
+                    usage=self._usage(data),
                 )
+                self._structured_cache[cache_key] = deepcopy(result)
+                self._record_request(purpose, payload, result)
+                return result
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)
 
-        return LLMResult(
+        result = LLMResult(
             text="{}",
             provider="local",
             model="fallback",
@@ -112,6 +119,102 @@ class DeepSeekGateway:
             error=last_error or "provider structured call failed",
             usage={"estimated_prompt_chars": sum(len(m.get("content", "")) for m in messages)},
         )
+        self._record_request(purpose, payload, result)
+        return result
+
+    def _payload(self, messages: list[dict[str, str]], *, purpose: str, structured: bool) -> dict[str, Any]:
+        thinking = self.settings.deepseek_thinking
+        payload: dict[str, Any] = {
+            "model": self.settings.deepseek_structured_model if structured else self.settings.deepseek_chat_model,
+            "messages": self._format_messages(messages, structured=structured),
+            "stream": False,
+            "max_tokens": self.settings.deepseek_structured_max_tokens if structured else self.settings.deepseek_chat_max_tokens,
+        }
+        if thinking in {"enabled", "disabled"}:
+            payload["thinking"] = {"type": thinking}
+        if thinking == "enabled":
+            payload["reasoning_effort"] = "high"
+        else:
+            payload["temperature"] = 0.1 if structured else 0.7
+        if structured:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    def _format_messages(self, messages: list[dict[str, str]], *, structured: bool) -> list[dict[str, str]]:
+        if not structured:
+            return messages
+        formatted = [dict(message) for message in messages]
+        if formatted and "json" not in formatted[0].get("content", "").lower():
+            formatted[0]["content"] = f"{formatted[0].get('content', '')}\n必须输出 valid json object。"
+        return formatted
+
+    def _usage(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            return usage
+        hit = int(usage.get("prompt_cache_hit_tokens") or 0)
+        miss = int(usage.get("prompt_cache_miss_tokens") or 0)
+        total = hit + miss
+        usage = dict(usage)
+        usage["prompt_cache_hit_ratio"] = round(hit / total, 4) if total else 0.0
+        usage["client_cache_hit"] = False
+        return usage
+
+    def _structured_cache_key(self, payload: dict[str, Any]) -> str:
+        return json.dumps(
+            {
+                "model": payload.get("model"),
+                "messages": payload.get("messages"),
+                "response_format": payload.get("response_format"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _record_request(self, purpose: str, payload: dict[str, Any], result: LLMResult, *, client_cache_hit: bool = False) -> None:
+        self._request_log.append(
+            {
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "purpose": purpose,
+                "model": payload.get("model"),
+                "thinking": payload.get("thinking"),
+                "response_format": payload.get("response_format"),
+                "max_tokens": payload.get("max_tokens"),
+                "messages": payload.get("messages", []),
+                "prompt_stats": self._prompt_stats(payload.get("messages", [])),
+                "provider": result.provider,
+                "degraded": result.degraded,
+                "elapsed_ms": result.elapsed_ms,
+                "error": result.error,
+                "usage": result.usage,
+                "response_text": result.text,
+                "client_cache_hit": client_cache_hit,
+            }
+        )
+        self._request_log = self._request_log[-80:]
+
+    def debug_requests(self) -> list[dict[str, Any]]:
+        return deepcopy(self._request_log)
+
+    def _prompt_stats(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        system_messages = [message for message in messages if message.get("role") == "system"]
+        system_segments = [
+            {
+                "index": index,
+                "chars": len(message.get("content", "")),
+                "first_line": message.get("content", "").splitlines()[0] if message.get("content") else "",
+            }
+            for index, message in enumerate(system_messages)
+        ]
+        return {
+            "message_count": len(messages),
+            "total_chars": sum(len(message.get("content", "")) for message in messages),
+            "stable_system_chars": len(system_messages[0].get("content", "")) if system_messages else 0,
+            "summary_system_chars": len(system_messages[1].get("content", "")) if len(system_messages) > 1 else 0,
+            "memory_system_chars": len(system_messages[2].get("content", "")) if len(system_messages) > 2 else 0,
+            "time_system_chars": len(system_messages[3].get("content", "")) if len(system_messages) > 3 else 0,
+            "system_segments": system_segments,
+        }
 
     def _fallback(self, messages: list[dict[str, str]], started: float, error: str) -> LLMResult:
         user_text = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .chat_service import ChatService
 from .config import load_settings
 from .llm_gateway import DeepSeekGateway
-from .storage import JsonStore
+from .storage import create_store
 
 
 class ChatRequest(BaseModel):
@@ -24,7 +24,7 @@ class BackgroundRequest(BaseModel):
 
 
 settings = load_settings()
-store = JsonStore(settings)
+store = create_store(settings)
 service = ChatService(store, DeepSeekGateway(settings))
 app = FastAPI(title="AI 虚拟好友聊天 MVP")
 
@@ -75,6 +75,11 @@ def api_memory_confirmations() -> list[dict[str, Any]]:
     return service.memory_confirmations()
 
 
+@app.get("/api/debug")
+def api_debug() -> dict[str, Any]:
+    return service.debug_snapshot()
+
+
 @app.post("/api/memory-confirmations/{confirmation_id}/accept")
 def api_accept_memory_confirmation(confirmation_id: str) -> dict[str, Any]:
     item = service.confirm_memory_candidate(confirmation_id, True)
@@ -94,6 +99,11 @@ def api_reject_memory_confirmation(confirmation_id: str) -> dict[str, Any]:
 @app.delete("/api/memories/{memory_id}")
 def api_delete_memory(memory_id: str) -> dict[str, bool]:
     return {"deleted": service.delete_memory(memory_id)}
+
+
+@app.post("/api/memories/tidy")
+def api_tidy_memories() -> dict[str, Any]:
+    return service.tidy_memory_store()
 
 
 @app.get("/api/llm/health")

@@ -10,13 +10,13 @@ from urllib.parse import urlparse
 from app.chat_service import ChatService
 from app.config import load_settings
 from app.llm_gateway import DeepSeekGateway
-from app.storage import JsonStore
+from app.storage import create_store
 
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "app" / "static"
 settings = load_settings()
-service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+service = ChatService(create_store(settings), DeepSeekGateway(settings))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -36,6 +36,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(service.memories())
         if path == "/api/memory-confirmations":
             return self._send_json(service.memory_confirmations())
+        if path == "/api/debug":
+            return self._send_json(service.debug_snapshot())
         if path == "/api/llm/health":
             return self._send_json(
                 {
@@ -68,6 +70,8 @@ class Handler(BaseHTTPRequestHandler):
             confirmation_id = path.split("/")[-2]
             result = service.confirm_memory_candidate(confirmation_id, False)
             return self._send_json(result or {"detail": "confirmation not found"}, 200 if result else 404)
+        if path == "/api/memories/tidy":
+            return self._send_json(service.tidy_memory_store())
         self._send_json({"detail": "not found"}, 404)
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib hook

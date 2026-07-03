@@ -7,29 +7,50 @@ from .memory import (
     apply_user_corrections,
     audit_memory_use,
     build_memory_context,
+    build_logical_turn,
     build_session_summary,
     build_user_profile,
     choose_extractor,
+    choose_intent_classifier,
     close_resolved_open_loops,
     enqueue_confirmation,
     generate_reflections,
+    infer_feedback_signals,
     maintain_memories,
     mark_recalled,
     memory_layers,
     pending_confirmations,
     review_memory_candidates,
+    RuleBasedMemoryExtractor,
+    RuleBasedIntentClassifier,
+    should_build_session_summary,
+    tidy_memories,
     upsert_memories,
     work_memory,
+    DEFAULT_MEMORY_PARAMS,
+    DEFAULT_MEMORY_PROFILE,
 )
 from .persona import active_persona_text, initialize_persona
-from .storage import JsonStore, new_id, now_iso
+from .storage import StorageBackend, new_id, now_iso
+from .time_context import current_time_context
 
 
 class ChatService:
-    def __init__(self, store: JsonStore, gateway: DeepSeekGateway) -> None:
+    def __init__(self, store: StorageBackend, gateway: DeepSeekGateway) -> None:
         self.store = store
         self.gateway = gateway
-        self.memory_extractor = choose_extractor(gateway.settings, gateway)
+        self.memory_extractor_init_error = None
+        self.intent_classifier_init_error = None
+        try:
+            self.memory_extractor = choose_extractor(gateway.settings, gateway)
+        except Exception as exc:
+            self.memory_extractor_init_error = f"{type(exc).__name__}: {exc}"
+            self.memory_extractor = RuleBasedMemoryExtractor()
+        try:
+            self.intent_classifier = choose_intent_classifier(gateway.settings, gateway)
+        except Exception as exc:
+            self.intent_classifier_init_error = f"{type(exc).__name__}: {exc}"
+            self.intent_classifier = RuleBasedIntentClassifier()
 
     def status(self) -> dict[str, Any]:
         state = self.store.snapshot()
@@ -38,13 +59,15 @@ class ChatService:
             "session_id": state["active_session_id"],
             "persona": persona,
             "layers": memory_layers(state),
-            "profile": build_user_profile(state.get("memories", [])),
+            "profile": build_user_profile(self.store.list_memories(status="active")),
             "memory_confirmations": pending_confirmations(state),
             "llm": {
                 "provider": "deepseek",
                 "configured": self.gateway.settings.has_deepseek_key,
                 "model": self.gateway.settings.deepseek_chat_model,
             },
+            "memory_params": {"profile": DEFAULT_MEMORY_PROFILE},
+            "time": current_time_context(),
         }
 
     def messages(self) -> list[dict[str, Any]]:
@@ -52,10 +75,36 @@ class ChatService:
         return session.get("messages", [])
 
     def memories(self) -> list[dict[str, Any]]:
-        return self.store.snapshot().get("memories", [])
+        return self.store.list_memories()
 
     def memory_confirmations(self) -> list[dict[str, Any]]:
         return pending_confirmations(self.store.snapshot())
+
+    def debug_snapshot(self) -> dict[str, Any]:
+        state = self.store.snapshot()
+        memories = self.store.list_memories()
+        grouped_memories: dict[str, list[dict[str, Any]]] = {}
+        for memory in memories:
+            grouped_memories.setdefault(memory.get("type", "unknown"), []).append(memory)
+        session = state["sessions"][state["active_session_id"]]
+        generation_logs = self.store.list_generation_logs(limit=80)
+        api_requests = self.gateway.debug_requests()
+        return {
+            "session": {
+                "id": session.get("id"),
+                "title": session.get("title"),
+                "message_count": len(session.get("messages", [])),
+                "summary_count": len(session.get("summaries", [])),
+                "summaries": session.get("summaries", []),
+            },
+            "memories": memories,
+            "memories_by_type": grouped_memories,
+            "memory_confirmations": pending_confirmations(state),
+            "generation_logs": generation_logs,
+            "api_requests": api_requests,
+            "raw_flow": self._debug_raw_flow(session, memories, generation_logs, api_requests),
+            "status": self.status(),
+        }
 
     def import_background(self, text: str, confirm: bool = True) -> dict[str, Any]:
         persona = initialize_persona(text)
@@ -90,9 +139,45 @@ class ChatService:
         state = self.store.snapshot()
         session = state["sessions"][state["active_session_id"]]
         persona = self._active_persona(state)
-        memory_context = build_memory_context(state.get("memories", []), user_text)
+        time_context = current_time_context()
+        logical_turn = build_logical_turn(session.get("messages", []), user_message)
+        memory_user_text = logical_turn["text"]
+        all_memories = state.get("memories", [])
+        recall_candidates = self._memory_recall_candidates(all_memories, memory_user_text)
+        memory_context = build_memory_context(
+            all_memories,
+            memory_user_text,
+            now=time_context["iso"],
+            recall_memories=recall_candidates,
+        )
+        intent_error = None
+        try:
+            intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
+        except Exception as exc:
+            intent_error = f"{type(exc).__name__}: {exc}"
+            intent = RuleBasedIntentClassifier().classify(memory_user_text, memory_context)
+            intent["classifier"] = "rule_based_intent_exception_fallback"
+            intent["classifier_error"] = intent_error
+        memory_context = build_memory_context(
+            all_memories,
+            memory_user_text,
+            now=time_context["iso"],
+            intent=intent,
+            recall_memories=recall_candidates,
+        )
+        extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
-        model_messages = self._build_prompt(session.get("messages", []), persona, memory_context, user_text)
+        prompt_summaries = session.get("summaries", [])
+        prompt_summary_boundary = int(prompt_summaries[-1].get("message_count", 0)) if prompt_summaries else 0
+        prompt_work_memory = work_memory(session.get("messages", []), user_text, after_message_count=prompt_summary_boundary)
+        model_messages = self._build_prompt(
+            persona,
+            memory_context,
+            user_text,
+            time_context,
+            prompt_summaries,
+            prompt_work_memory,
+        )
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
         assistant_message = {
@@ -108,21 +193,30 @@ class ChatService:
                 "memory_audit": memory_audit,
             },
         }
-        extracted = await self.memory_extractor.extract_async(user_text, result.text, {"memory_context": memory_context})
+        extraction_error = None
+        try:
+            extracted = await self.memory_extractor.extract_async(
+                extraction_text,
+                result.text,
+                {"memory_context": memory_context, "intent": intent, "logical_turn": logical_turn},
+            )
+        except Exception as exc:
+            extraction_error = f"{type(exc).__name__}: {exc}"
+            extracted = []
         reviewed = review_memory_candidates(extracted)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
             active_session = next_state["sessions"][next_state["active_session_id"]]
             active_session["messages"].extend([user_message, assistant_message])
             active_session["updated_at"] = now_iso()
-            summary = build_session_summary(active_session["messages"])
-            if summary and not active_session.get("summaries"):
-                active_session.setdefault("summaries", []).append(summary)
-            elif summary and len(active_session["messages"]) % 16 == 0:
+            summaries = active_session.setdefault("summaries", [])
+            last_summary_count = int(summaries[-1].get("message_count", 0)) if summaries else 0
+            summary = build_session_summary(active_session["messages"], after_message_count=last_summary_count)
+            if summary and should_build_session_summary(active_session["messages"], summaries):
                 active_session.setdefault("summaries", []).append(summary)
             current_memories = next_state.setdefault("memories", [])
-            correction_result = apply_user_corrections(current_memories, user_text)
-            closed_memories = close_resolved_open_loops(current_memories, user_text)
+            correction_result = apply_user_corrections(current_memories, memory_user_text, intent=intent)
+            closed_memories = close_resolved_open_loops(current_memories, memory_user_text, intent=intent)
             mark_recalled(current_memories, [m["id"] for m in memories])
             upsert_memories(current_memories, correction_result["created"])
             upsert_memories(current_memories, reviewed["accepted"])
@@ -132,6 +226,45 @@ class ChatService:
             upsert_memories(current_memories, reviewed_reflections["accepted"])
             queued_reflections = enqueue_confirmation(next_state, reviewed_reflections["needs_confirmation"])
             maintenance_result = maintain_memories(current_memories)
+            prompt_manifest = {
+                "api_message_count": len(model_messages),
+                "work_memory_count": len(prompt_work_memory),
+                "work_memory_after_message_count": prompt_summary_boundary,
+                "session_summary_count": len(prompt_summaries),
+                "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
+                "prompt_segments": _prompt_segments(model_messages),
+                "logical_turn": logical_turn,
+                "used_memory_ids": [m["id"] for m in memories],
+                "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
+                "recall_candidate_count": len(recall_candidates),
+                "recall_candidate_ids": [m.get("id") for m in recall_candidates],
+                "recall_candidate_source": "storage_search_plus_priority",
+                "new_memory_ids": [m["id"] for m in reviewed["accepted"]],
+                "corrected_memory_ids": [m["id"] for m in correction_result["corrected"]],
+                "deleted_memory_ids": [m["id"] for m in correction_result["deleted"]],
+                "correction_created_ids": [m["id"] for m in correction_result["created"]],
+                "queued_memory_ids": [item["id"] for item in queued_confirmations + queued_reflections],
+                "rejected_memory_ids": [m["id"] for m in reviewed["rejected"] + reviewed_reflections["rejected"]],
+                "closed_memory_ids": [m["id"] for m in closed_memories],
+                "decayed_memory_ids": [m["id"] for m in maintenance_result["decayed"]],
+                "archived_memory_ids": [m["id"] for m in maintenance_result["archived"]],
+                "reflection_ids": [m["id"] for m in reviewed_reflections["accepted"]],
+                "followup_mode": memory_context.get("followup_plan", {}).get("mode"),
+                "disclosure_mode": memory_context.get("disclosure_plan", {}).get("mode"),
+                "memory_audit_status": memory_audit["status"],
+                "memory_audit_issues": memory_audit["issues"],
+                "memory_extractor": getattr(self.memory_extractor, "name", "unknown"),
+                "memory_extractor_init_error": self.memory_extractor_init_error,
+                "memory_extraction_error": extraction_error,
+                "intent_classifier": intent.get("classifier", getattr(self.intent_classifier, "name", "unknown")),
+                "intent_classifier_init_error": self.intent_classifier_init_error,
+                "intent_classifier_error": intent_error,
+                "intent": intent,
+                "has_persona": persona is not None,
+                "time_context": time_context,
+            }
+            previous_log = next_state.get("generation_logs", [])[-1] if next_state.get("generation_logs") else None
+            feedback_signals = infer_feedback_signals(memory_user_text, previous_log=previous_log, current_manifest=prompt_manifest)
             next_state.setdefault("generation_logs", []).append(
                 {
                     "id": new_id("gen"),
@@ -143,27 +276,9 @@ class ChatService:
                     "elapsed_ms": result.elapsed_ms,
                     "error": result.error,
                     "usage": result.usage,
-                    "prompt_manifest": {
-                        "work_memory_count": min(len(active_session["messages"]), 24),
-                        "used_memory_ids": [m["id"] for m in memories],
-                        "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
-                        "new_memory_ids": [m["id"] for m in reviewed["accepted"]],
-                        "corrected_memory_ids": [m["id"] for m in correction_result["corrected"]],
-                        "deleted_memory_ids": [m["id"] for m in correction_result["deleted"]],
-                        "correction_created_ids": [m["id"] for m in correction_result["created"]],
-                        "queued_memory_ids": [item["id"] for item in queued_confirmations + queued_reflections],
-                        "rejected_memory_ids": [m["id"] for m in reviewed["rejected"] + reviewed_reflections["rejected"]],
-                        "closed_memory_ids": [m["id"] for m in closed_memories],
-                        "decayed_memory_ids": [m["id"] for m in maintenance_result["decayed"]],
-                        "archived_memory_ids": [m["id"] for m in maintenance_result["archived"]],
-                        "reflection_ids": [m["id"] for m in reviewed_reflections["accepted"]],
-                        "followup_mode": memory_context.get("followup_plan", {}).get("mode"),
-                        "disclosure_mode": memory_context.get("disclosure_plan", {}).get("mode"),
-                        "memory_audit_status": memory_audit["status"],
-                        "memory_audit_issues": memory_audit["issues"],
-                        "memory_extractor": getattr(self.memory_extractor, "name", "unknown"),
-                        "has_persona": persona is not None,
-                    },
+                    "api_messages": model_messages,
+                    "prompt_manifest": prompt_manifest,
+                    "feedback_signals": feedback_signals,
                 }
             )
             return {"messages": active_session["messages"], "layers": memory_layers(next_state)}
@@ -180,8 +295,10 @@ class ChatService:
             "followup_plan": memory_context.get("followup_plan"),
             "disclosure_plan": memory_context.get("disclosure_plan"),
             "memory_audit": memory_audit,
+            "intent": intent,
+            "logical_turn": logical_turn,
             "degraded": result.degraded,
-            "llm": {"provider": result.provider, "model": result.model, "elapsed_ms": result.elapsed_ms},
+            "llm": {"provider": result.provider, "model": result.model, "elapsed_ms": result.elapsed_ms, "error": result.error, "usage": result.usage},
             "layers": updated["layers"],
         }
 
@@ -193,6 +310,12 @@ class ChatService:
                     memory["updated_at"] = now_iso()
                     return True
             return False
+
+        return self.store.mutate(mutate)
+
+    def tidy_memory_store(self) -> dict[str, Any]:
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            return tidy_memories(state.setdefault("memories", []))
 
         return self.store.mutate(mutate)
 
@@ -208,6 +331,32 @@ class ChatService:
                     candidate["is_user_confirmed"] = True
                     candidate["quality_decision"] = "accept"
                     upsert_memories(state.setdefault("memories", []), [candidate])
+                state.setdefault("generation_logs", []).append(
+                    {
+                        "id": new_id("gen"),
+                        "created_at": now_iso(),
+                        "purpose": "memory_confirmation",
+                        "provider": "local",
+                        "model": "user_feedback",
+                        "degraded": False,
+                        "elapsed_ms": 0,
+                        "error": None,
+                        "usage": None,
+                        "prompt_manifest": {
+                            "confirmation_id": confirmation_id,
+                            "candidate_memory_id": candidate.get("id"),
+                            "candidate_type": candidate.get("type"),
+                            "accepted": accept,
+                        },
+                        "feedback_signals": [
+                            {
+                                "type": "confirmation_accepted" if accept else "confirmation_rejected",
+                                "reason": "用户处理了记忆确认队列",
+                                "parameters": ["quality.auto_accept_min_confidence"],
+                            }
+                        ],
+                    }
+                )
                 return item
             return None
 
@@ -217,20 +366,142 @@ class ChatService:
         active_id = state.get("active_persona_id")
         return next((p for p in state.get("persona_versions", []) if p["id"] == active_id), None)
 
+    def _memory_recall_candidates(self, memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
+        limit = max(DEFAULT_MEMORY_PARAMS.recall.default_limit * 4, DEFAULT_MEMORY_PARAMS.recall.default_limit)
+        candidates: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def add(memory: dict[str, Any]) -> None:
+            memory_id = memory.get("id")
+            if not memory_id or memory_id in seen_ids or memory.get("status") != "active":
+                return
+            candidates.append(memory)
+            seen_ids.add(memory_id)
+
+        for memory in self.store.search_memories(user_text, limit=limit):
+            add(memory)
+        for memory in memories:
+            if memory.get("open") or memory.get("type") in {"boundary", "response_rule"} or memory.get("is_user_confirmed"):
+                add(memory)
+        return candidates
+
     def _build_prompt(
         self,
-        messages: list[dict[str, Any]],
         persona: dict[str, Any] | None,
         memory_context: dict[str, Any],
         user_text: str,
+        time_context: dict[str, str] | None = None,
+        summaries: list[dict[str, Any]] | None = None,
+        prompt_work_memory: list[dict[str, str]] | None = None,
     ) -> list[dict[str, str]]:
-        system = "\n".join(
+        time_context = time_context or current_time_context()
+        prompt_work_memory = prompt_work_memory or []
+        summary_context = _format_session_summaries(summaries or [])
+        memory_runtime_context = "\n".join(
             [
-                "你需要作为虚拟好友进行自然中文聊天。",
-                active_persona_text(persona),
+                "记忆上下文：",
                 "记忆系统给出的长期画像和本轮相关记忆如下。只在自然、有帮助时使用，不要机械复述。",
                 memory_context["prompt_text"],
-                "回复要求：默认简短，先回应情绪，再回应事实；能自然接续待跟进事项；不要编造历史；不要泄露第三方隐私。",
             ]
         )
-        return [{"role": "system", "content": system}, *work_memory(messages), {"role": "user", "content": user_text}]
+        time_runtime_context = "\n".join(["运行时上下文：", time_context["prompt_text"]])
+        return [
+            {"role": "system", "content": _stable_system_prompt(persona)},
+            {"role": "system", "content": summary_context},
+            {"role": "system", "content": memory_runtime_context},
+            {"role": "system", "content": time_runtime_context},
+            *prompt_work_memory,
+            {"role": "user", "content": user_text},
+        ]
+
+    def _debug_raw_flow(
+        self,
+        session: dict[str, Any],
+        memories: list[dict[str, Any]],
+        generation_logs: list[dict[str, Any]],
+        api_requests: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "description": "Raw debug data. generation_logs are persisted. api_requests are in-process only since the latest server restart.",
+            "current_session_messages": session.get("messages", []),
+            "current_session_summaries": session.get("summaries", []),
+            "current_memories": memories,
+            "persisted_generation_logs": generation_logs,
+            "in_process_api_requests": api_requests,
+            "latest_chat": _latest_chat_flow(generation_logs, api_requests),
+        }
+
+
+def _latest_chat_flow(generation_logs: list[dict[str, Any]], api_requests: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_log = next((log for log in reversed(generation_logs) if log.get("purpose") == "chat"), None)
+    if not latest_log:
+        return {}
+    return {
+        "chat_generation_log": latest_log,
+        "chat_api_messages": latest_log.get("api_messages", []),
+        "prompt_manifest": latest_log.get("prompt_manifest", {}),
+        "feedback_signals": latest_log.get("feedback_signals", []),
+        "nearby_api_requests": [
+            request
+            for request in api_requests[-12:]
+            if request.get("purpose") in {"chat", "memory_intent", "memory_extract", "structured"}
+        ],
+        "note": "chat_api_messages is the persisted chat-completion prompt. nearby_api_requests are live process request/response records.",
+    }
+
+
+def _stable_system_prompt(persona: dict[str, Any] | None = None) -> str:
+    return "\n".join(
+        [
+            "你需要作为拟人虚拟好友进行自然中文聊天。",
+            active_persona_text(persona),
+            "回复原则：默认简短，先回应情绪，再回应事实；像熟悉的朋友一样自然接话。",
+            "时间原则：必须使用运行时上下文里的当前真实时间理解今天、明天、昨天、今晚、下周等相对时间。",
+            "记忆原则：长期记忆只在自然、有帮助时使用；不要机械复述；不要说出内部字段名。",
+            "跟进原则：如果上下文提示某个待办 time_state=elapsed，可以轻问结果，但不能假装已经知道结果。",
+            "边界原则：不要编造历史；不要泄露第三方隐私；不伪装真人；不承诺现实身份。",
+        ]
+    )
+
+
+def _format_session_summaries(summaries: list[dict[str, Any]]) -> str:
+    if not summaries:
+        return "会话摘要：暂无。"
+    lines = ["会话摘要（只用于理解较早上下文，不要机械复述）："]
+    for summary in summaries[-3:]:
+        text = summary.get("summary", "")
+        suggestion = summary.get("follow_up_suggestion")
+        marker = f"#{summary.get('message_count', '?')}"
+        if suggestion:
+            lines.append(f"- {marker} {text}；{suggestion}")
+        else:
+            lines.append(f"- {marker} {text}")
+    return "\n".join(lines)
+
+
+def _prompt_segments(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    system_index = 0
+    system_names = ["stable_persona", "session_summaries", "memory_context", "time_context"]
+    for index, message in enumerate(messages):
+        role = message.get("role", "")
+        if role == "system":
+            name = system_names[system_index] if system_index < len(system_names) else f"system_{system_index + 1}"
+            volatile = name == "time_context"
+            system_index += 1
+        elif role == "user" and index == len(messages) - 1:
+            name = "current_user_message"
+            volatile = True
+        else:
+            name = "work_memory"
+            volatile = True
+        segments.append(
+            {
+                "index": index,
+                "role": role,
+                "name": name,
+                "chars": len(message.get("content", "")),
+                "volatile": volatile,
+            }
+        )
+    return segments

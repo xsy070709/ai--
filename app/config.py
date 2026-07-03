@@ -26,6 +26,12 @@ class Settings:
     max_retries: int
     force_local_llm: bool = False
     memory_extractor: str = "rule"
+    memory_intent_classifier: str = "rule"
+    storage_backend: str = "json"
+    deepseek_structured_model: str = "deepseek-v4-flash"
+    deepseek_thinking: str = "disabled"
+    deepseek_chat_max_tokens: int = 700
+    deepseek_structured_max_tokens: int = 900
 
     @property
     def has_deepseek_key(self) -> bool:
@@ -42,9 +48,15 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         deepseek_api_base_url=os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-v4"),
+        deepseek_chat_model=os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-v4-flash"),
+        deepseek_structured_model=os.getenv("DEEPSEEK_STRUCTURED_MODEL", os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-v4-flash")),
+        deepseek_thinking=os.getenv("DEEPSEEK_THINKING", "disabled").lower(),
+        deepseek_chat_max_tokens=int(os.getenv("DEEPSEEK_CHAT_MAX_TOKENS", "700")),
+        deepseek_structured_max_tokens=int(os.getenv("DEEPSEEK_STRUCTURED_MAX_TOKENS", "900")),
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
         force_local_llm=os.getenv("LLM_FORCE_LOCAL", "").lower() in {"1", "true", "yes"},
         memory_extractor=os.getenv("MEMORY_EXTRACTOR", "rule").lower(),
+        memory_intent_classifier=os.getenv("MEMORY_INTENT_CLASSIFIER", "rule").lower(),
+        storage_backend=os.getenv("STORAGE_BACKEND", "json").lower(),
     )

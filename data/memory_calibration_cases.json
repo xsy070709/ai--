@@ -1,0 +1,257 @@
+[
+  {
+    "name": "short vulnerable event is remembered",
+    "user_text": "我分手了",
+    "expected_memory_types": ["emotion_pattern", "episodic"],
+    "unexpected_memory_types": ["preference", "goal"]
+  },
+  {
+    "name": "semantic sleep recall",
+    "seed_memories": ["记住我最近失眠严重。"],
+    "user_text": "我最近睡不好",
+    "expected_recall_contains": ["失眠"]
+  },
+  {
+    "name": "alias interview recall",
+    "seed_memories": ["明天面试要准备简历。"],
+    "user_text": "秋招自我介绍还没准备好",
+    "expected_recall_contains": ["面试"]
+  },
+  {
+    "name": "long shared agreement is retained",
+    "user_text": "我们约定下次继续把项目拆成小任务，然后每次只检查一个最卡住的地方，不要一下子铺开太多细节。",
+    "expected_memory_types": ["shared_experience"]
+  },
+  {
+    "name": "intent completion acknowledges closure",
+    "seed_memories": ["明天下午我要交材料，现在有点焦虑。"],
+    "user_text": "材料递上去了",
+    "intent": {
+      "has_completion_signal": true,
+      "is_casual_chat": false,
+      "information_density": 2.2
+    },
+    "expected_followup_mode": "acknowledge_closure",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_resolved"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
+  },
+  {
+    "name": "intent recall invitation is tracked",
+    "seed_memories": ["明天面试要准备自我介绍。"],
+    "user_text": "那个后来继续说",
+    "intent": {
+      "has_followup_invitation": true,
+      "is_casual_chat": true,
+      "information_density": 2.1
+    },
+    "expected_followup_mode": "gentle_follow_up",
+    "expected_feedback_signals": ["user_invited_recall"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
+  },
+  {
+    "name": "followup topic shift is tracked",
+    "user_text": "哈哈哈",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进：材料"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_topic_shift"],
+    "unexpected_feedback_signals": ["followup_engaged", "followup_resolved"]
+  },
+  {
+    "name": "memory correction is tracked",
+    "user_text": "不是周三，是周五下午面试",
+    "current_manifest": {
+      "corrected_memory_ids": ["mem_1"]
+    },
+    "expected_feedback_signals": ["memory_correction"],
+    "unexpected_feedback_signals": ["followup_resolved", "followup_topic_shift"]
+  },
+  {
+    "name": "memory deletion correction is tracked",
+    "user_text": "这条不用记，我喜欢安静一点的回复",
+    "current_manifest": {
+      "deleted_memory_ids": ["mem_1"]
+    },
+    "expected_feedback_signals": ["memory_correction"],
+    "unexpected_memory_types": ["goal"],
+    "unexpected_feedback_signals": ["followup_resolved", "followup_topic_shift"]
+  },
+  {
+    "name": "over explicit boundary mention is audited",
+    "seed_memories": ["以后不要提家里的事。"],
+    "user_text": "家里的事我不想聊",
+    "assistant_reply": "我知道你不想提家里的事，所以我不说。",
+    "expected_audit_status": "fail",
+    "expected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "over explicit tone memory is audited",
+    "seed_memories": ["我现在因为项目有点焦虑。"],
+    "user_text": "项目又卡住了",
+    "assistant_reply": "我记得你在项目相关情境中容易感到压力，我们慢慢来。",
+    "expected_disclosure_mode": "tone_only",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["over_explicit_tone_memory"],
+    "unexpected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "missed invited followup is audited",
+    "seed_memories": ["明天面试要准备自我介绍。"],
+    "user_text": "那个后来继续说",
+    "intent": {
+      "has_followup_invitation": true,
+      "is_casual_chat": true,
+      "information_density": 2.1
+    },
+    "assistant_reply": "嗯，我在。你现在感觉怎么样？",
+    "expected_followup_mode": "gentle_follow_up",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["missed_expected_followup"]
+  },
+  {
+    "name": "disclosure not engaged after casual shift",
+    "user_text": "哈哈哈",
+    "previous_log": {
+      "prompt_manifest": {
+        "disclosure_mode": "can_mention",
+        "used_memory_reasons": {
+          "mem_1": "旧事接续"
+        }
+      }
+    },
+    "expected_feedback_signals": ["disclosure_not_engaged"],
+    "unexpected_feedback_signals": ["disclosure_engaged", "user_invited_recall"]
+  },
+  {
+    "name": "paraphrased correction mutates memory",
+    "seed_memories": ["明天周三下午要面试。"],
+    "user_text": "不是周三，是周五下午面试",
+    "expected_corrected_contains": ["周三"],
+    "expected_created_memory_types": ["goal"],
+    "unexpected_created_memory_types": ["preference"]
+  },
+  {
+    "name": "intent deletion correction mutates memory",
+    "seed_memories": ["记住我喜欢深夜复盘"],
+    "user_text": "这条别存了，深夜复盘那个",
+    "intent": {
+      "has_correction_intent": true,
+      "correction_action": "delete",
+      "correction_query": "深夜复盘",
+      "is_casual_chat": false,
+      "information_density": 1.5
+    },
+    "expected_deleted_contains": ["深夜复盘"],
+    "unexpected_created_memory_types": ["goal"]
+  },
+  {
+    "name": "followup fatigue is tracked as shift",
+    "user_text": "先别问这个了",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进：面试准备"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_topic_shift"],
+    "unexpected_feedback_signals": ["followup_engaged", "followup_resolved"]
+  },
+  {
+    "name": "disclosure engaged after substantive reply",
+    "user_text": "对，上次那个项目又卡住了，我还是很焦虑",
+    "previous_log": {
+      "prompt_manifest": {
+        "disclosure_mode": "can_mention",
+        "used_memory_reasons": {
+          "mem_1": "旧事接续"
+        }
+      }
+    },
+    "expected_feedback_signals": ["disclosure_engaged"],
+    "unexpected_feedback_signals": ["disclosure_not_engaged"]
+  },
+  {
+    "name": "mixed language fatigue is remembered",
+    "user_text": "今天 really very tired，什么都不想动",
+    "expected_memory_types": ["emotion_pattern"],
+    "unexpected_memory_types": ["goal", "preference"]
+  },
+  {
+    "name": "expanded completion phrase resolves followup",
+    "seed_memories": ["明天下午我要交材料，现在有点焦虑。"],
+    "user_text": "材料忙完了，终于搞完",
+    "expected_followup_mode": "acknowledge_closure",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进：材料"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_resolved"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
+  },
+  {
+    "name": "expanded deletion phrase mutates memory",
+    "seed_memories": ["记住我喜欢深夜复盘"],
+    "user_text": "这条不用存，深夜复盘那个",
+    "expected_deleted_contains": ["深夜复盘"],
+    "unexpected_created_memory_types": ["goal"]
+  },
+  {
+    "name": "comma correction intent keeps new value",
+    "seed_memories": ["明天周三下午要面试。"],
+    "user_text": "不是周三，是周五下午面试",
+    "expected_corrected_contains": ["周三"],
+    "expected_created_memory_types": ["goal"],
+    "intent": {
+      "has_correction_intent": true,
+      "correction_action": "correct",
+      "correction_query": "周三",
+      "correction_new_value": "周五下午面试",
+      "is_casual_chat": false,
+      "information_density": 2.9
+    }
+  },
+  {
+    "name": "pattern label tone memory is audited",
+    "seed_memories": ["我现在因为项目有点焦虑。"],
+    "user_text": "项目又卡住了",
+    "assistant_reply": "你的模式是项目一受阻就容易压力上来，我们先拆一步。",
+    "expected_disclosure_mode": "tone_only",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["over_explicit_tone_memory"],
+    "unexpected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "slang burnout is remembered",
+    "user_text": "我摆烂了",
+    "expected_memory_types": ["emotion_pattern"],
+    "unexpected_memory_types": ["goal", "preference"]
+  },
+  {
+    "name": "mixed language anxiety is remembered",
+    "user_text": "今天 very anxious",
+    "expected_memory_types": ["emotion_pattern"],
+    "unexpected_memory_types": ["goal", "preference"]
+  }
+]

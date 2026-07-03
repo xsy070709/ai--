@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .params import DEFAULT_MEMORY_PARAMS
 from .text import tokens
+
+PARAMS = DEFAULT_MEMORY_PARAMS.conversation
 
 
 def audit_memory_use(reply: str, memory_context: dict[str, Any]) -> dict[str, Any]:
@@ -65,9 +68,8 @@ def _content_surface_detected(reply: str, content: str) -> bool:
     hits = sum(1 for token in content_tokens if token in reply)
     if hits >= min(2, len(content_tokens)):
         return True
-    anchors = ["家里", "家庭", "项目", "压力", "焦虑", "材料", "面试", "考试", "安静", "热闹", "大道理"]
-    anchor_hits = sum(1 for anchor in anchors if anchor in content and anchor in reply)
-    return anchor_hits >= 1 and any(phrase in reply for phrase in ["我记得", "我知道", "你不想", "你容易", "你之前", "上次"])
+    anchor_hits = sum(1 for anchor in PARAMS.audit_surface_anchors if anchor in content and anchor in reply)
+    return anchor_hits >= 1 and any(phrase in reply for phrase in ["我记得", "我知道", "你不想", "你容易", "你的模式", "你之前", "上次"])
 
 
 def _labeling_phrase_detected(reply: str, item: dict[str, Any]) -> bool:
