@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from copy import deepcopy
@@ -23,6 +24,7 @@ def new_id(prefix: str) -> str:
 def default_state() -> dict[str, Any]:
     session_id = "default"
     return {
+        "state_revision": 0,
         "active_session_id": session_id,
         "sessions": {
             session_id: {
@@ -94,6 +96,7 @@ class JsonStore:
         with self._lock:
             state = self._read()
             result = fn(state)
+            _bump_state_revision(state)
             self._write(state)
             return result
 
@@ -305,6 +308,7 @@ class SqliteStore:
         with self._lock:
             state = self._read_state() or default_state()
             result = fn(state)
+            _bump_state_revision(state)
             self._write_state(state)
             return result
 
@@ -333,11 +337,11 @@ class SqliteStore:
                     """
                     SELECT full_json
                     FROM memories
-                    WHERE status = 'active' AND content LIKE ?
+                    WHERE status = 'active' AND content LIKE ? ESCAPE '\\'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
-                    (f"%{query}%", limit),
+                    (_like_contains_pattern(query), limit),
                 ).fetchall()
         memories = [json.loads(row["full_json"]) for row in rows]
         if len(memories) >= limit:
@@ -356,6 +360,7 @@ class SqliteStore:
         from .memory.semantic import cosine_similarity, semantic_vector
 
         query_vector = semantic_vector(query)
+        candidate_limit = max(limit * 16, 256)
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -363,7 +368,10 @@ class SqliteStore:
                 FROM memory_embeddings
                 JOIN memories ON memories.id = memory_embeddings.memory_id
                 WHERE memories.status = 'active'
-                """
+                ORDER BY memories.importance DESC, memories.updated_at DESC
+                LIMIT ?
+                """,
+                (candidate_limit,),
             ).fetchall()
         scored = []
         for row in rows:
@@ -414,12 +422,24 @@ class SqliteStore:
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(default_state())
     normalized.update(state)
+    normalized.setdefault("state_revision", 0)
     normalized.setdefault("sessions", {})
     normalized.setdefault("persona_versions", [])
     normalized.setdefault("memories", [])
     normalized.setdefault("generation_logs", [])
     normalized.setdefault("memory_confirmations", [])
     return normalized
+
+
+def _state_revision(state: dict[str, Any]) -> int:
+    try:
+        return int(state.get("state_revision", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_state_revision(state: dict[str, Any]) -> None:
+    state["state_revision"] = _state_revision(state) + 1
 
 
 def _session_from_state(state: dict[str, Any], session_id: str) -> dict[str, Any]:
@@ -431,11 +451,30 @@ def _session_from_state(state: dict[str, Any], session_id: str) -> dict[str, Any
 
 
 def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> None:
-    for table in ["sessions", "messages", "memories", "memory_fts", "memory_embeddings", "persona_versions", "generation_logs"]:
-        db.execute(f"DELETE FROM {table}")
-
     sessions = state.get("sessions", {})
+    session_ids = {session.get("id") for session in sessions.values() if session.get("id") is not None}
+    message_ids = {
+        message.get("id")
+        for session in sessions.values()
+        for message in session.get("messages", [])
+        if message.get("id") is not None
+    }
+    memory_ids = {memory.get("id") for memory in state.get("memories", []) if memory.get("id") is not None}
+    persona_ids = {persona.get("id") for persona in state.get("persona_versions", []) if persona.get("id") is not None}
+    log_ids = {log.get("id") for log in state.get("generation_logs", []) if log.get("id") is not None}
+
+    _delete_missing_projection_rows(db, "sessions", "id", session_ids)
+    _delete_missing_projection_rows(db, "messages", "id", message_ids)
+    _delete_missing_projection_rows(db, "memory_fts", "memory_id", memory_ids)
+    _delete_missing_projection_rows(db, "memory_embeddings", "memory_id", memory_ids)
+    _delete_missing_projection_rows(db, "memories", "id", memory_ids)
+    _delete_missing_projection_rows(db, "persona_versions", "id", persona_ids)
+    _delete_missing_projection_rows(db, "generation_logs", "id", log_ids)
+
     for session in sessions.values():
+        session_id = session.get("id")
+        if session_id is None:
+            continue
         messages = session.get("messages", [])
         summaries = session.get("summaries", [])
         db.execute(
@@ -444,7 +483,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                session.get("id"),
+                session_id,
                 session.get("title"),
                 session.get("created_at"),
                 session.get("updated_at"),
@@ -453,14 +492,17 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
             ),
         )
         for message in messages:
+            message_id = message.get("id")
+            if message_id is None:
+                continue
             db.execute(
                 """
                 INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at, meta_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    message.get("id"),
-                    session.get("id"),
+                    message_id,
+                    session_id,
                     message.get("role"),
                     message.get("content", ""),
                     message.get("created_at"),
@@ -469,6 +511,12 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
             )
 
     for memory in state.get("memories", []):
+        memory_id = memory.get("id")
+        if memory_id is None:
+            continue
+        full_json = json.dumps(memory, ensure_ascii=False)
+        existing = db.execute("SELECT full_json FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        memory_changed = not existing or existing["full_json"] != full_json
         db.execute(
             """
             INSERT OR REPLACE INTO memories (
@@ -478,7 +526,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                memory.get("id"),
+                memory_id,
                 memory.get("type"),
                 memory.get("content", ""),
                 memory.get("importance"),
@@ -491,28 +539,41 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
                 memory.get("last_used_at"),
                 json.dumps(memory.get("tags", []), ensure_ascii=False),
                 json.dumps(memory.get("evidence", []), ensure_ascii=False),
-                json.dumps(memory, ensure_ascii=False),
+                full_json,
             ),
         )
+        embedding = db.execute("SELECT memory_id FROM memory_embeddings WHERE memory_id = ?", (memory_id,)).fetchone()
+        fts = db.execute("SELECT rowid FROM memory_fts WHERE memory_id = ? LIMIT 1", (memory_id,)).fetchone()
+        if not memory_changed and embedding and fts:
+            continue
+
+        db.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
         db.execute(
             "INSERT INTO memory_fts (memory_id, content, tags) VALUES (?, ?, ?)",
-            (memory.get("id"), memory.get("content", ""), " ".join(memory.get("tags", []))),
+            (memory_id, memory.get("content", ""), " ".join(memory.get("tags", []))),
         )
-        from .memory.semantic import semantic_vector
+        if memory_changed or not embedding:
+            from .memory.semantic import semantic_vector
 
-        vector = semantic_vector(memory.get("content", ""))
-        db.execute(
-            "INSERT OR REPLACE INTO memory_embeddings (memory_id, model, dimensions, vector_json) VALUES (?, ?, ?, ?)",
-            (memory.get("id"), "local-hash-v1", len(vector), json.dumps(vector)),
-        )
+            vector = semantic_vector(memory.get("content", ""))
+            db.execute(
+                "INSERT OR REPLACE INTO memory_embeddings (memory_id, model, dimensions, vector_json) VALUES (?, ?, ?, ?)",
+                (memory_id, "local-hash-v1", len(vector), json.dumps(vector)),
+            )
 
     for persona in state.get("persona_versions", []):
+        persona_id = persona.get("id")
+        if persona_id is None:
+            continue
         db.execute(
             "INSERT OR REPLACE INTO persona_versions (id, status, version, full_json) VALUES (?, ?, ?, ?)",
-            (persona.get("id"), persona.get("status"), persona.get("version"), json.dumps(persona, ensure_ascii=False)),
+            (persona_id, persona.get("status"), persona.get("version"), json.dumps(persona, ensure_ascii=False)),
         )
 
     for log in state.get("generation_logs", []):
+        log_id = log.get("id")
+        if log_id is None:
+            continue
         db.execute(
             """
             INSERT OR REPLACE INTO generation_logs (
@@ -522,7 +583,7 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                log.get("id"),
+                log_id,
                 log.get("created_at"),
                 log.get("purpose"),
                 log.get("provider"),
@@ -537,11 +598,28 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         )
 
 
+def _delete_missing_projection_rows(db: sqlite3.Connection, table: str, key: str, ids: set[str]) -> None:
+    if not ids:
+        db.execute(f"DELETE FROM {table}")
+        return
+    placeholders = ",".join("?" for _ in ids)
+    db.execute(f"DELETE FROM {table} WHERE {key} IS NULL OR {key} NOT IN ({placeholders})", tuple(ids))
+
+
 def _fts_query(query: str) -> str:
-    terms = [term.replace('"', "") for term in query.split() if term.strip()]
+    terms = []
+    for raw_term in query.split():
+        term = re.sub(r"[^\w]+", "", raw_term.strip(), flags=re.UNICODE).replace('"', '""')
+        if term:
+            terms.append(term)
     if not terms:
         return ""
     return " OR ".join(f'"{term}"' for term in terms)
+
+
+def _like_contains_pattern(query: str) -> str:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def migrate_json_to_sqlite(settings: Settings, *, overwrite: bool = False) -> Path:

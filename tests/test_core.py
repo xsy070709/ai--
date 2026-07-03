@@ -35,6 +35,7 @@ from app.memory import (
     tidy_memories,
     upsert_memories,
 )
+from app.memory.feedback import _dedupe_signals
 from app.memory.text import unfinished_items
 from app.memory.text import emotion_cause, topics_from_text
 from app.memory.initiative import build_disclosure_plan
@@ -183,6 +184,28 @@ def test_memory_params_can_be_overridden_from_file(tmp_path) -> None:
     assert params.recall.cooldown_penalty == 1.20
 
 
+def test_memory_params_reject_unknown_override_keys(tmp_path) -> None:
+    params_file = tmp_path / "memory_params.json"
+    params_file.write_text('{"recall":{"open_item_bouns":0.9}}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="recall\\.open_item_bouns"):
+        memory_params_from_file(params_file)
+
+
+def test_default_memory_params_warn_and_fallback_for_bad_env_file(tmp_path) -> None:
+    from app.memory.params import _default_memory_params_from_environment
+
+    missing_file = tmp_path / "missing.json"
+    profile, params, warnings = _default_memory_params_from_environment(
+        {"MEMORY_PARAM_PROFILE": "proactive", "MEMORY_PARAMS_FILE": str(missing_file)}
+    )
+
+    assert profile == "proactive"
+    assert params.recall.open_item_bonus == memory_params_for_profile("proactive").recall.open_item_bonus
+    assert warnings
+    assert "MEMORY_PARAMS_FILE ignored" in warnings[0]
+
+
 def test_memory_params_explain_high_impact_knobs() -> None:
     description = PARAMETER_DESCRIPTIONS["recall.open_item_bonus"]
 
@@ -238,11 +261,43 @@ def test_feedback_signals_use_intent_invitation_and_density() -> None:
     assert "disclosure_not_engaged" not in signal_types
 
 
+def test_feedback_signals_track_tone_only_engagement() -> None:
+    previous_log = {"prompt_manifest": {"disclosure_mode": "tone_only", "used_memory_reasons": {"mem_1": "项目压力"}}}
+    current_manifest = {"intent": {"topics": ["项目"], "information_density": 2.4}}
+
+    signals = infer_feedback_signals("我还是卡在项目验收这里，有点顶不住", previous_log=previous_log, current_manifest=current_manifest)
+
+    assert {signal["type"] for signal in signals} == {"tone_guidance_engaged"}
+    assert signals[0]["parameters"] == ["disclosure.mention_recall_threshold"]
+
+
 def test_feedback_signals_use_configured_invitation_words() -> None:
     signals = infer_feedback_signals("刚才说那个后来呢", current_manifest={})
 
     assert has_followup_invitation("刚才说那个后来呢")
     assert {signal["type"] for signal in signals} == {"user_invited_recall"}
+
+
+def test_feedback_signal_dedupe_preserves_distinct_evidence() -> None:
+    signals = _dedupe_signals(
+        [
+            {"type": "memory_surface_issue", "reason": "审计发现过度表露", "parameters": ["disclosure.mention_recall_threshold"]},
+            {"type": "memory_surface_issue", "reason": "审计发现过度表露", "parameters": ["disclosure.mention_recall_threshold"]},
+            {"type": "memory_surface_issue", "reason": "用户没有接住表露", "parameters": ["disclosure.mention_recall_threshold"]},
+        ]
+    )
+
+    assert [signal["reason"] for signal in signals] == ["审计发现过度表露", "用户没有接住表露"]
+
+
+def test_feedback_signals_emit_confirmation_results() -> None:
+    accepted = infer_feedback_signals("", current_manifest={"confirmation_id": "conf_1", "accepted": True})
+    rejected = infer_feedback_signals("", current_manifest={"confirmation_id": "conf_2", "accepted": False})
+
+    assert {signal["type"] for signal in accepted} == {"confirmation_accepted"}
+    assert {signal["type"] for signal in rejected} == {"confirmation_rejected"}
+    assert accepted[0]["parameters"] == ["quality.auto_accept_min_confidence"]
+    assert rejected[0]["parameters"] == ["quality.auto_accept_min_confidence"]
 
 
 def test_feedback_analysis_suggests_parameter_adjustments() -> None:
@@ -272,6 +327,9 @@ def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     conservative_suggestions = {item["parameter"]: item["direction"] for item in conservative_report["suggestions"]}
     assert conservative_suggestions["quality.auto_accept_min_confidence"] == "decrease"
     assert conservative_report["parameter_evidence"]["quality.auto_accept_min_confidence"]["positive"] == 3
+
+    tone_report = analyze_feedback([{"feedback_signals": [{"type": "tone_guidance_engaged"}]}])
+    assert tone_report["parameter_evidence"]["disclosure.mention_recall_threshold"]["positive"] == 1
 
 
 def test_memory_calibration_cases_pass_current_baseline() -> None:
@@ -1102,6 +1160,7 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     assert service.messages()[-1]["role"] == "assistant"
     assert service.status()["layers"]["persona"]["count"] == 1
     assert service.status()["profile"]["preferences"]
+    assert service.status()["memory_params"]["warnings"] == []
     logs = service.store.snapshot()["generation_logs"]
     assert "当前真实时间" in logs[-1]["api_messages"][3]["content"]
     assert logs[-1]["prompt_manifest"]["time_context"]["date"]
@@ -1214,6 +1273,58 @@ def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     assert result["degraded"] is True
     assert service.memories()
     assert (tmp_path / "store.sqlite3").exists()
+
+
+def test_chat_service_pins_write_session_when_active_session_changes_during_await(tmp_path) -> None:
+    class ActiveSessionSwitchGateway:
+        def __init__(self, settings, store):
+            self.settings = settings
+            self.store = store
+
+        async def chat(self, messages, purpose="chat"):
+            def switch_active_session(state):
+                state.setdefault("sessions", {})["other"] = {
+                    "id": "other",
+                    "title": "另一个会话",
+                    "created_at": "2026-07-03T10:00:00+08:00",
+                    "updated_at": "2026-07-03T10:00:00+08:00",
+                    "messages": [],
+                    "summaries": [],
+                }
+                state["active_session_id"] = "other"
+                return None
+
+            self.store.mutate(switch_active_session)
+            return LLMResult(text="我先记下。", provider="fake", model="fake", degraded=False, elapsed_ms=1)
+
+        def debug_requests(self):
+            return []
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    store = JsonStore(settings)
+    service = ChatService(store, ActiveSessionSwitchGateway(settings, store))
+
+    result = asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+
+    state = service.store.snapshot()
+    latest_log = state["generation_logs"][-1]
+    manifest = latest_log["prompt_manifest"]
+    assert result["reply"] == "我先记下。"
+    assert [message["role"] for message in state["sessions"]["default"]["messages"]] == ["user", "assistant"]
+    assert state["sessions"]["other"]["messages"] == []
+    assert state["active_session_id"] == "other"
+    assert manifest["snapshot_session_id"] == "default"
+    assert manifest["write_session_id"] == "default"
+    assert manifest["active_session_changed"] is True
+    assert manifest["state_revision_changed"] is True
+    assert manifest["commit_state_revision"] > manifest["snapshot_state_revision"]
 
 
 def test_chat_service_memories_uses_projection_interface(tmp_path) -> None:
@@ -1477,6 +1588,90 @@ def test_sqlite_projection_tolerates_duplicate_entity_ids(tmp_path) -> None:
     assert memory_count == 1
 
 
+def test_sqlite_projection_preserves_unchanged_memory_embeddings(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+    memory = make_memory("preference", "用户喜欢简洁直接的回复", 0.9, True, "回复风格")
+    memory["id"] = "mem_stable"
+
+    def add_memory(state):
+        state.setdefault("memories", []).append(memory)
+        return "ok"
+
+    assert store.mutate(add_memory) == "ok"
+    with store._connect() as db:
+        first_embedding = db.execute(
+            "SELECT rowid, vector_json FROM memory_embeddings WHERE memory_id = 'mem_stable'"
+        ).fetchone()
+        first_fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_stable'").fetchone()[
+            "count"
+        ]
+
+    def add_unrelated_log(state):
+        state.setdefault("generation_logs", []).append(
+            {"id": "log_unrelated", "purpose": "chat", "created_at": "2026-07-03T10:03:00+08:00"}
+        )
+        return "ok"
+
+    assert store.mutate(add_unrelated_log) == "ok"
+    with store._connect() as db:
+        second_embedding = db.execute(
+            "SELECT rowid, vector_json FROM memory_embeddings WHERE memory_id = 'mem_stable'"
+        ).fetchone()
+        second_fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_stable'").fetchone()[
+            "count"
+        ]
+
+    assert first_embedding["rowid"] == second_embedding["rowid"]
+    assert first_embedding["vector_json"] == second_embedding["vector_json"]
+    assert first_fts_count == 1
+    assert second_fts_count == 1
+
+
+def test_sqlite_projection_deletes_removed_memory_rows(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+    memory = make_memory("preference", "用户喜欢简洁直接的回复", 0.9, True, "回复风格")
+    memory["id"] = "mem_removed"
+
+    def add_memory(state):
+        state.setdefault("memories", []).append(memory)
+        return "ok"
+
+    def remove_memory(state):
+        state["memories"] = []
+        return "ok"
+
+    assert store.mutate(add_memory) == "ok"
+    assert store.mutate(remove_memory) == "ok"
+    with store._connect() as db:
+        memory_count = db.execute("SELECT COUNT(*) AS count FROM memories WHERE id = 'mem_removed'").fetchone()["count"]
+        embedding_count = db.execute(
+            "SELECT COUNT(*) AS count FROM memory_embeddings WHERE memory_id = 'mem_removed'"
+        ).fetchone()["count"]
+        fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_removed'").fetchone()["count"]
+
+    assert memory_count == 0
+    assert embedding_count == 0
+    assert fts_count == 0
+
+
 def test_sqlite_lists_memories_from_projection(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
@@ -1580,6 +1775,53 @@ def test_sqlite_search_fills_exact_results_with_semantic_matches(tmp_path) -> No
 
     assert any("压力" in content for content in contents)
     assert any("失眠" in content for content in contents)
+
+
+def test_sqlite_search_treats_like_wildcards_as_literals(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).extend(
+            [
+                make_memory("fact", "进度是100%完成", 0.8, False, "进度"),
+                make_memory("fact", "进度是1000完成", 0.8, False, "进度"),
+            ]
+        )
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    contents = [memory["content"] for memory in store.search_memories("%")]
+
+    assert contents == ["进度是100%完成"]
+
+
+def test_sqlite_search_ignores_fts_operator_only_queries(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    def mutate(state):
+        state.setdefault("memories", []).append(make_memory("fact", "普通记忆内容", 0.8, False, "普通"))
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert store.search_memories("***") == []
 
 
 def test_create_store_uses_configured_backend(tmp_path) -> None:
@@ -1724,6 +1966,8 @@ def test_rejected_confirmation_does_not_enter_memory(tmp_path) -> None:
 
     assert rejected and rejected["status"] == "rejected"
     assert not [memory for memory in service.memories() if memory["type"] == "boundary"]
+    logs = service.store.snapshot()["generation_logs"]
+    assert logs[-1]["feedback_signals"][0]["type"] == "confirmation_rejected"
 
 
 def test_chat_service_closes_open_loop_and_generates_reflection(tmp_path) -> None:

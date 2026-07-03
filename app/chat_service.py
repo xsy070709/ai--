@@ -29,6 +29,7 @@ from .memory import (
     work_memory,
     DEFAULT_MEMORY_PARAMS,
     DEFAULT_MEMORY_PROFILE,
+    PARAMETER_LOAD_WARNINGS,
 )
 from .persona import active_persona_text, initialize_persona
 from .storage import StorageBackend, new_id, now_iso
@@ -66,7 +67,7 @@ class ChatService:
                 "configured": self.gateway.settings.has_deepseek_key,
                 "model": self.gateway.settings.deepseek_chat_model,
             },
-            "memory_params": {"profile": DEFAULT_MEMORY_PROFILE},
+            "memory_params": {"profile": DEFAULT_MEMORY_PROFILE, "warnings": PARAMETER_LOAD_WARNINGS},
             "time": current_time_context(),
         }
 
@@ -137,7 +138,9 @@ class ChatService:
         user_message = {"id": new_id("msg"), "role": "user", "content": user_text, "created_at": now_iso()}
 
         state = self.store.snapshot()
-        session = state["sessions"][state["active_session_id"]]
+        snapshot_session_id = state["active_session_id"]
+        snapshot_state_revision = _state_revision(state)
+        session = state["sessions"][snapshot_session_id]
         persona = self._active_persona(state)
         time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
@@ -206,7 +209,10 @@ class ChatService:
         reviewed = review_memory_candidates(extracted)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
-            active_session = next_state["sessions"][next_state["active_session_id"]]
+            write_session_id = snapshot_session_id if snapshot_session_id in next_state["sessions"] else next_state["active_session_id"]
+            active_session = next_state["sessions"][write_session_id]
+            commit_state_revision = _state_revision(next_state)
+            active_session_changed = next_state.get("active_session_id") != snapshot_session_id
             active_session["messages"].extend([user_message, assistant_message])
             active_session["updated_at"] = now_iso()
             summaries = active_session.setdefault("summaries", [])
@@ -234,6 +240,12 @@ class ChatService:
                 "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
                 "prompt_segments": _prompt_segments(model_messages),
                 "logical_turn": logical_turn,
+                "snapshot_session_id": snapshot_session_id,
+                "write_session_id": write_session_id,
+                "active_session_changed": active_session_changed,
+                "snapshot_state_revision": snapshot_state_revision,
+                "commit_state_revision": commit_state_revision,
+                "state_revision_changed": commit_state_revision != snapshot_state_revision,
                 "used_memory_ids": [m["id"] for m in memories],
                 "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
                 "recall_candidate_count": len(recall_candidates),
@@ -331,6 +343,12 @@ class ChatService:
                     candidate["is_user_confirmed"] = True
                     candidate["quality_decision"] = "accept"
                     upsert_memories(state.setdefault("memories", []), [candidate])
+                prompt_manifest = {
+                    "confirmation_id": confirmation_id,
+                    "candidate_memory_id": candidate.get("id"),
+                    "candidate_type": candidate.get("type"),
+                    "accepted": accept,
+                }
                 state.setdefault("generation_logs", []).append(
                     {
                         "id": new_id("gen"),
@@ -342,19 +360,8 @@ class ChatService:
                         "elapsed_ms": 0,
                         "error": None,
                         "usage": None,
-                        "prompt_manifest": {
-                            "confirmation_id": confirmation_id,
-                            "candidate_memory_id": candidate.get("id"),
-                            "candidate_type": candidate.get("type"),
-                            "accepted": accept,
-                        },
-                        "feedback_signals": [
-                            {
-                                "type": "confirmation_accepted" if accept else "confirmation_rejected",
-                                "reason": "用户处理了记忆确认队列",
-                                "parameters": ["quality.auto_accept_min_confidence"],
-                            }
-                        ],
+                        "prompt_manifest": prompt_manifest,
+                        "feedback_signals": infer_feedback_signals("", current_manifest=prompt_manifest),
                     }
                 )
                 return item
@@ -430,6 +437,13 @@ class ChatService:
             "in_process_api_requests": api_requests,
             "latest_chat": _latest_chat_flow(generation_logs, api_requests),
         }
+
+
+def _state_revision(state: dict[str, Any]) -> int:
+    try:
+        return int(state.get("state_revision", 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _latest_chat_flow(generation_logs: list[dict[str, Any]], api_requests: list[dict[str, Any]]) -> dict[str, Any]:
