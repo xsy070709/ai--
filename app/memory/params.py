@@ -184,28 +184,57 @@ PARAMETER_DESCRIPTIONS = {
     "recall.open_item_bonus": {
         "description": "待跟进事项的召回加分。",
         "sensitivity": "high",
+        "range": [0.5, 2.0],
         "effect_of_increasing": "更频繁地提及未完成事项，更贴心但也更可能显得催促。",
         "effect_of_decreasing": "更少主动跟进，用户需要自己提起旧事。",
     },
     "recall.cooldown_penalty": {
         "description": "近期反复使用过的记忆降权。",
         "sensitivity": "medium",
+        "range": [0.0, 2.5],
         "effect_of_increasing": "更少重复旧记忆，但可能错过用户想接续的内容。",
         "effect_of_decreasing": "更容易接上旧事，但也更容易重复。",
+    },
+    "maintenance.cooldown_use_threshold": {
+        "description": "记忆被使用多少次后开始进入召回冷却。",
+        "sensitivity": "medium",
+        "range": [1, 8],
+        "effect_of_increasing": "允许更多自然接续旧事，但可能增加重复感。",
+        "effect_of_decreasing": "更快降低重复记忆的曝光，但可能错过用户主动接续。",
     },
     "quality.auto_accept_min_confidence": {
         "description": "低风险记忆自动接受所需置信度。",
         "sensitivity": "high",
+        "range": [0.5, 0.9],
         "effect_of_increasing": "更多记忆进入确认队列，降低误记风险。",
         "effect_of_decreasing": "更多记忆自动沉淀，减少打扰但提高误记风险。",
     },
     "disclosure.mention_recall_threshold": {
         "description": "允许主动明说某条记忆的召回分阈值。",
         "sensitivity": "high",
+        "range": [3.0, 6.0],
         "effect_of_increasing": "更克制，更少显得突兀。",
         "effect_of_decreasing": "更主动，更像会接旧事，但可能过度表露。",
     },
 }
+
+
+def parameter_metadata(params: MemoryParams | None = None) -> dict[str, dict[str, Any]]:
+    params = params or DEFAULT_MEMORY_PARAMS
+    return {
+        name: {
+            **description,
+            "value": _parameter_value(params, name),
+        }
+        for name, description in PARAMETER_DESCRIPTIONS.items()
+    }
+
+
+def _parameter_value(params: MemoryParams, dotted_name: str) -> Any:
+    current: Any = params
+    for part in dotted_name.split("."):
+        current = getattr(current, part)
+    return current
 
 
 def memory_params_for_profile(profile: str = "balanced") -> MemoryParams:

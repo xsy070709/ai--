@@ -26,6 +26,7 @@ from app.memory import (
     maintain_memories,
     memory_params_for_profile,
     memory_params_from_file,
+    parameter_metadata,
     relevant_memories,
     review_memory_candidates,
     tidy_memories,
@@ -182,6 +183,15 @@ def test_memory_params_explain_high_impact_knobs() -> None:
 
     assert description["sensitivity"] == "high"
     assert "待跟进" in description["description"]
+    assert description["range"] == [0.5, 2.0]
+
+
+def test_memory_parameter_metadata_includes_current_values() -> None:
+    metadata = parameter_metadata()
+
+    assert metadata["recall.open_item_bonus"]["value"] == DEFAULT_MEMORY_PARAMS.recall.open_item_bonus
+    assert metadata["maintenance.cooldown_use_threshold"]["value"] == DEFAULT_MEMORY_PARAMS.maintenance.cooldown_use_threshold
+    assert metadata["disclosure.mention_recall_threshold"]["range"] == [3.0, 6.0]
 
 
 def test_feedback_signals_detect_followup_engagement_and_corrections() -> None:
@@ -244,6 +254,8 @@ def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     assert report["parameter_evidence"]["recall.open_item_bonus"]["negative"] == 2
     assert report["parameter_evidence"]["quality.auto_accept_min_confidence"]["negative"] == 2
     assert report["parameter_evidence"]["recall.cooldown_penalty"]["signals"]["followup_topic_shift"] == 2
+    assert report["parameter_metadata"]["recall.open_item_bonus"]["value"] == DEFAULT_MEMORY_PARAMS.recall.open_item_bonus
+    assert "effect_of_increasing" in report["parameter_metadata"]["recall.cooldown_penalty"]
 
     conservative_report = analyze_feedback(
         [

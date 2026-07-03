@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from .params import DEFAULT_MEMORY_PARAMS
+from .params import DEFAULT_MEMORY_PARAMS, parameter_metadata
 from .signals import (
     has_completion_signal,
     has_followup_invitation,
@@ -93,6 +93,7 @@ def analyze_feedback(logs: list[dict[str, Any]]) -> dict[str, Any]:
     signals = [signal for log in logs for signal in log.get("feedback_signals", [])]
     counts = Counter(signal.get("type", "unknown") for signal in signals)
     parameter_evidence = _parameter_evidence(signals)
+    metadata = parameter_metadata()
     suggestions = []
 
     if counts["followup_topic_shift"] > counts["followup_engaged"] + counts["followup_resolved"]:
@@ -149,6 +150,7 @@ def analyze_feedback(logs: list[dict[str, Any]]) -> dict[str, Any]:
         "total_signals": len(signals),
         "signal_counts": dict(counts),
         "parameter_evidence": parameter_evidence,
+        "parameter_metadata": {name: metadata[name] for name in parameter_evidence if name in metadata},
         "suggestions": suggestions,
     }
 

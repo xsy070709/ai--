@@ -11,7 +11,7 @@ from .intent import IntentClassifier, RuleBasedIntentClassifier, StructuredLLMIn
 from .lifecycle import mark_recalled, upsert_memories
 from .hygiene import tidy_memories
 from .maintenance import maintain_memories
-from .params import DEFAULT_MEMORY_PARAMS, DEFAULT_MEMORY_PROFILE, PARAMETER_DESCRIPTIONS, MemoryParams, memory_params_for_profile, memory_params_from_file
+from .params import DEFAULT_MEMORY_PARAMS, DEFAULT_MEMORY_PROFILE, PARAMETER_DESCRIPTIONS, MemoryParams, memory_params_for_profile, memory_params_from_file, parameter_metadata
 from .profile import build_user_profile
 from .quality import enqueue_confirmation, pending_confirmations, review_memory, review_memory_candidates
 from .recall import relevant_memories
@@ -26,6 +26,7 @@ __all__ = [
     "DEFAULT_MEMORY_PARAMS",
     "DEFAULT_MEMORY_PROFILE",
     "PARAMETER_DESCRIPTIONS",
+    "parameter_metadata",
     "MemoryParams",
     "memory_params_for_profile",
     "memory_params_from_file",

@@ -12,7 +12,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 | Dynamic working memory | MVP implemented | `work_memory(..., after_message_count=...)`, prompt manifest fields | Limits are configurable heuristics; not learned from usage yet. |
 | JSON to SQLite path | MVP implemented | `StorageBackend`, `JsonStore`, `SqliteStore`, migration script, memory/log projection reads, search tests | State snapshot remains JSON-compatible by design for mutation flows; SQLite is still a backend/projection, not the only source model. |
 | FTS and semantic recall | Partially implemented | `memory_fts`, `memory_embeddings`, `semantic.py`, storage search tests | Semantic vectors are deterministic local fallback vectors, not production embeddings or `sqlite-vec`. |
-| Parameter centralization | MVP implemented | `MemoryParams`, profiles, file overrides, centralized topic/follow-up/audit anchors | Defaults are still hand-tuned until broader calibration data exists. |
+| Parameter centralization | MVP implemented | `MemoryParams`, profiles, file overrides, parameter metadata, centralized topic/follow-up/audit anchors | Defaults are still hand-tuned until broader calibration data exists. |
 | Feedback and calibration loop | Partially implemented | `feedback.py`, `calibration.py`, `scripts/analyze_memory_feedback.py`, `scripts/evaluate_memory_calibration.py` | Feedback reports evidence, but there is no automatic optimizer or large labeled dataset. |
 | Keyword flexibility and intent | Partially implemented | `StructuredLLMIntentClassifier`, rule fallback, centralized keyword groups and topic aliases | Rule fallback still needs broader phrase coverage; LLM classifier is optional rather than always-on. |
 | Prompt/summary observability | MVP implemented | prompt segments, `prompt_manifest`, `system_segments`, summary boundary fixes | Runtime service restart may still be needed after backend edits in local sessions. |
@@ -42,6 +42,7 @@ Remaining risk: the current semantic search is local and deterministic. Write-si
 - Tunable memory behavior is centralized in `MemoryParams`, with profiles and config-file overrides.
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
 - Calibration scripts provide a repeatable gate for recall/follow-up/feedback expectations.
+- Feedback analysis now includes parameter metadata with current values, sensitivity, safe ranges, and expected adjustment effects for high-impact knobs.
 
 Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current thirteen cases before trusting parameter changes.
 
