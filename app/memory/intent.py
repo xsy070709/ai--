@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ..time_context import current_time_context
+from .params import DEFAULT_MEMORY_PARAMS
 from .signals import (
     emotion_tags_for,
     has_completion_signal,
@@ -18,6 +19,8 @@ from .signals import (
     looks_like_casual_chat,
 )
 from .text import topics_from_text, unfinished_items, valence_from_text
+
+PARAMS = DEFAULT_MEMORY_PARAMS.conversation
 
 
 class IntentClassifier(Protocol):
@@ -97,7 +100,7 @@ def choose_intent_classifier(settings: Any, gateway: Any) -> IntentClassifier:
 def _completion_target(user_text: str) -> str | None:
     if not has_completion_signal(user_text):
         return None
-    for topic in ["材料", "面试", "考试", "项目", "作业", "报告", "简历", "论文"]:
+    for topic in PARAMS.completion_overlap_anchors:
         if topic in user_text:
             return topic
     return "未指明事项"

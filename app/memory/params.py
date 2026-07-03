@@ -84,6 +84,24 @@ class ConversationParams:
         "交上去了",
     )
     completion_overlap_anchors: tuple[str, ...] = ("材料", "面试", "考试", "项目", "开会", "作业", "报告", "任务", "简历", "论文", "汇报")
+    audit_surface_anchors: tuple[str, ...] = (
+        "家里",
+        "家庭",
+        "项目",
+        "压力",
+        "焦虑",
+        "材料",
+        "面试",
+        "考试",
+        "安静",
+        "热闹",
+        "大道理",
+        "实习",
+        "答辩",
+        "汇报",
+        "简历",
+        "论文",
+    )
     casual_max_chars: int = 12
     casual_exemption_words: tuple[str, ...] = ("继续", "后来", "上次", "还记得", "怎么办", "焦虑", "难受")
     followup_item_limit: int = 2

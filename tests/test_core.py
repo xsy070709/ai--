@@ -365,6 +365,12 @@ def test_rule_based_intent_uses_configured_invitation_words() -> None:
     assert intent["has_followup_invitation"] is True
 
 
+def test_rule_based_intent_uses_configured_completion_targets() -> None:
+    intent = RuleBasedIntentClassifier().classify("汇报搞定了，终于收工")
+
+    assert intent["completion_target"] == "汇报"
+
+
 def test_topics_use_configured_topic_words() -> None:
     intent = RuleBasedIntentClassifier().classify("实习答辩材料还没准备好")
 
@@ -789,6 +795,27 @@ def test_memory_audit_fails_when_silent_memory_is_surfaced() -> None:
 
     assert audit["status"] == "fail"
     assert audit["issues"][0]["type"] == "forbidden_memory_surface"
+
+
+def test_memory_audit_uses_configured_surface_anchors() -> None:
+    context = {
+        "disclosure_plan": {
+            "mode": "quiet",
+            "items": [
+                {
+                    "memory_id": "m1",
+                    "type": "boundary",
+                    "action": "silent",
+                    "content": "用户不想聊实习压力",
+                }
+            ],
+        },
+        "followup_plan": {"mode": "none"},
+    }
+
+    audit = audit_memory_use("我知道你不想聊实习，这个我不提。", context)
+
+    assert audit["status"] == "fail"
 
 
 def test_memory_audit_warns_when_tone_memory_is_labeled() -> None:
