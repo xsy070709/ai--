@@ -35,6 +35,7 @@ Remaining risk: this is a practical local semantic layer. It does not yet use ex
 
 - The storage contract now supports both JSON and SQLite backends through `StorageBackend`.
 - SQLite includes FTS and derived embedding tables, plus migration from existing JSON state.
+- SQLite projection writes are incremental by entity id, and unchanged memory rows keep their existing FTS and embedding rows across unrelated mutations.
 - JSON and SQLite session lookup now treats only missing sessions as fallback candidates, and JSON-to-SQLite migration refuses to overwrite existing SQLite state unless explicitly requested.
 - Storage writes maintain a monotonic `state_revision` so chat logs can detect mutations that happened between prompt snapshot and final write.
 - Chat recall can use backend search candidates instead of relying only on full in-memory scans.

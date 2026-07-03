@@ -2,21 +2,23 @@
 
 **源分支**: `codex/audit-memory-idea`
 **目标分支**: `master`
-**审计日期**: 2026-07-03（初版）→ 2026-07-03（第二轮更新）
+**审计日期**: 2026-07-03（初版）→ 2026-07-03（后续迭代分支更新）
 **评估方法**: 人工全面审查 + 4 个专业审计 Agent 并行审查（storage / chat_service / memory 模块 / 测试覆盖）
 **变更规模**: 43 commits | 47 files | +5,537 / −213 lines
 
 > **🔄 第二轮更新**：审查了上次审计后新增的 8 个提交（`4551907..8b3ba42`），
 > 针对第一轮发现的 12 个 CRITICAL+HIGH 问题进行修复验证。
-> **结论：9/12 已修复，整体评级从 4.1 提升至 4.5。**
+>
+> **🔄 后续迭代分支更新**：继续纳入 confirmation 反馈集中、聊天写入快照固定、SQLite 投影增量同步等修复。
+> **结论：12/12 已修复或缓解，整体评级从 4.1 提升至 4.7。**
 
 ---
 
 ## 一、总体裁决
 
-### 🟢 第二轮评估：建议合并 — 12 个 CRITICAL+HIGH 中 9 个已修复
+### 🟢 后续迭代分支评估：建议合并 — 12 个 CRITICAL+HIGH 已修复或缓解
 
-8 个新提交（`4551907..8b3ba42`）直接针对上一轮审计的核心问题进行修复。代码质量显著改善，测试覆盖进一步扩大。
+后续迭代分支继续针对上一轮审计的核心问题进行修复。代码质量显著改善，测试覆盖进一步扩大，剩余风险已从阻塞缺陷转为长期设计取舍。
 
 ### 第一轮验证数据（初版审计）
 
@@ -97,7 +99,7 @@
 
 **影响**: 随数据量增长写性能线性恶化。MVP 规模可接受。
 
-**修复**: 改为增量投影更新；或标注为已知 MVP 限制，在 `audit_status.md` 记录。
+**修复**: 已改为按实体 id 增量删除/更新投影行；未变化的 memory 会保留既有 `memory_embeddings` 和 `memory_fts` 行，避免无关 mutation 重算 embedding。
 
 ---
 
@@ -216,9 +218,9 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 | 问题 | 状态 | 修复详情 |
 |------|------|----------|
 | **C1**: date.replace() 无效日期崩溃 | ✅ **已修复** | `70d2909` — 新增 `_month_day_date()` 验证 month∈[1,12]/day∈[1,31]，先试 month/day 再试 day/month，均无效返回 None；新增 `test_time_reasoning_ignores_invalid_numeric_dates` 和 `test_time_reasoning_falls_back_to_day_month_numeric_dates` 回归测试 |
-| **C2**: 投影表全量重建 | ⚠️ **已知限制** | 标记为 MVP 约束，在 `audit_status.md` 中记录 |
+| **C2**: 投影表全量重建 | ✅ **已修复** | `_sync_projection_tables` 改为增量投影同步；新增 `test_sqlite_projection_preserves_unchanged_memory_embeddings` 和 `test_sqlite_projection_deletes_removed_memory_rows` |
 | **C3**: 提取失败导致 LLM 回复丢失 | ✅ **已修复** | `d157dfd` — `extract_async` 加 try/except，失败时用 `[]` 继续；错误记录进 `prompt_manifest.memory_extraction_error`；新增 `test_chat_service_keeps_reply_when_memory_extractor_raises` |
-| **C4**: TOCTOU 竞态条件 | ⚠️ **已知限制** | 单用户应用场景下影响极低，添加代码注释说明假设 |
+| **C4**: TOCTOU 竞态条件 | ✅ **已缓解** | `2bf7909` — 聊天写入固定到 prompt snapshot 的 session，`state_revision` 记录快照与提交差异；新增 active-session race 回归测试 |
 | **C5**: 提取器/分类器初始化无降级 | ✅ **已修复** | `d157dfd` — `__init__` 中两个 `try/except`，失败时回退 `RuleBasedMemoryExtractor()`/`RuleBasedIntentClassifier()`；错误记录进 `memory_extractor_init_error`/`intent_classifier_init_error`；新增 `test_chat_service_falls_back_when_memory_factories_raise` |
 
 ### HIGH 问题修复验证
@@ -227,7 +229,7 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 |------|------|----------|
 | **H1**: naive datetime .astimezone() 崩溃 | ✅ **已修复** | `70d2909` — `_coerce_datetime()` 先检查 `tzinfo`，naive 时用 `_local_timezone()` 附加时区再 `.astimezone()`；新增 `test_time_reasoning_handles_naive_datetimes_consistently` |
 | **H2**: mixed tz datetime 相减崩溃 | ✅ **已修复** | `332bbfa` — `_parse_time()` 统一标准化：naive datetime 附加本地时区后 `.astimezone()`；新增 `test_logical_turn_handles_mixed_naive_and_aware_timestamps` |
-| **H3**: confirmation 信号永不发射 | ⚠️ **未修复** | 两个确认信号（`confirmation_accepted/rejected`）仍未发射，对应的参数建议仍为死代码 |
+| **H3**: confirmation 信号永不发射 | ✅ **已修复** | `27d674b` — confirmation accept/reject 复用统一反馈推断路径，新增确认日志回归测试 |
 | **H4**: 校准时间非确定性 | ✅ **已修复** | 校准脚本输出含 `"reference_time": "2026-07-03T09:00:00+08:00"`，时间已冻结 |
 | **H5**: session() 空 dict 误判 | ✅ **已修复** | `8b3ba42` — 抽取 `_session_from_state()`，用 `is not None` 替代 `or`；新增 `test_storage_session_lookup_does_not_treat_empty_session_as_missing` |
 | **H6**: migrate 静默覆盖 | ✅ **已修复** | `8b3ba42` — 新增 `_sqlite_has_app_state()` 检查 + `overwrite` 参数，有数据时抛出 `FileExistsError`；新增 `test_migrate_json_to_sqlite_refuses_to_overwrite_existing_state` |
@@ -251,16 +253,15 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 | 文件系统测试 ERROR | 27 | 32 | +5（同 Windows 权限根因） |
 | 校准案例 | 18/18 | **24/24** | +6 案例 |
 | 校准得分 | 1.0 | 1.0 | 保持满分 |
-| CRITICAL 已修复 | — | **3/5** | C2/C4 为已知限制 |
-| HIGH 已修复 | — | **6/7** | H3 待修复 |
+| CRITICAL 已修复 | — | **5/5** | C4 仍保留“已发 prompt 可能陈旧”的审计标记 |
+| HIGH 已修复 | — | **7/7** | H3 confirmation 信号已接入统一反馈路径 |
 
 ### 剩余问题
 
 | 问题 | 级别 | 说明 |
 |------|------|------|
-| C2: 投影表全量重建 | CRITICAL → **已知限制** | MVP 规模可接受，后续迭代增量更新 |
-| C4: TOCTOU 竞态 | CRITICAL → **已知限制** | 单用户应用，异步协程串行处理 |
-| H3: confirmation 信号 | HIGH → **待修复** | 4 行代码量，不影响主线功能 |
+| C4: prompt 陈旧可观测性 | MEDIUM | 并发 mutation 后已固定写入 session 并记录 revision/session 变化，但已发给模型的 prompt 仍可能基于旧快照 |
+| 真实 embedding/sqlite-vec | MEDIUM | 当前 embedding 仍是本地 deterministic fallback，尚未接入生产级向量库 |
 
 ---
 
@@ -268,11 +269,11 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 
 | 模块 | 初版风险 | 当前风险 | 变化原因 |
 |------|----------|----------|----------|
-| `chat_service.py` | 🔴 高 (3C+1H) | 🟢 **低** (0C+0H) | C3/C5/H7 全部修复 |
+| `chat_service.py` | 🔴 高 (3C+1H) | 🟢 **低** (0C+0H) | C3/C4/C5/H7 全部修复或缓解 |
 | `time_reasoning.py` | 🔴 高 (1C+1H) | 🟢 **低** (0C+0H) | C1/H1 全部修复 |
-| `storage.py` | 🟡 中高 (1C+2H) | 🟡 **中** (1C+0H) | H5/H6 修复，C2 为已知限制 |
+| `storage.py` | 🟡 中高 (1C+2H) | 🟢 **低** (0C+0H) | C2/H5/H6 修复，投影同步已增量化 |
 | `turns.py` | 🟡 中 (1H) | 🟢 **低** (0H) | H2 修复 |
-| `feedback.py` | 🟡 中 (1H) | 🟡 中 (1H) | H3 待修复 |
+| `feedback.py` | 🟡 中 (1H) | 🟢 **低** (0H) | H3 修复，confirmation 信号集中推断 |
 | `calibration.py` | 🟡 中 (1H) | 🟢 **低** (0H) | H4 修复 |
 | `intent.py` | 🟢 低 | 🟢 低 | 无变化 |
 | `params.py` | 🟢 低 | 🟢 低 | 无变化 |
@@ -284,13 +285,13 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 
 | 指标 | 初版 | 第二轮 |
 |------|------|--------|
-| CRITICAL 未修复 | 5 | **2**（C2 已知限制 + C4 单用户假设） |
-| HIGH 未修复 | 7 | **1**（H3 confirmation 信号） |
-| CRITICAL+HIGH 修复率 | — | **9/12 = 75%** |
-| 综合评分 | 4.1/5.0 | **4.5/5.0** |
+| CRITICAL 未修复 | 5 | **0** |
+| HIGH 未修复 | 7 | **0** |
+| CRITICAL+HIGH 修复率 | — | **12/12 = 100%** |
+| 综合评分 | 4.1/5.0 | **4.7/5.0** |
 
-> C2（投影表全量重建）和 C4（TOCTOU 竞态）均标注为已知 MVP 约束，
-> 在单用户、小规模数据场景下不构成实际风险。
+> C4 的致命写错 session 风险已通过快照会话固定和 revision 记录缓解；
+> 剩余风险是模型已收到的 prompt 可能来自旧快照，需要后续决定是否做真正的乐观重试。
 
 ---
 
@@ -315,31 +316,34 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 
 ## 六、修复路线图（第二轮更新）
 
-### ✅ 已修复（本轮 5 个提交完成）
+### ✅ 已修复或缓解（后续迭代分支更新）
 
 ```
 ✅ C1: 70d2909 — time_reasoning.py 日期解析加固（_month_day_date 验证）
+✅ C2: 本轮 — storage.py 投影表增量同步，未变化 memory 不重建 embedding/FTS
 ✅ C3: d157dfd — chat_service.py 提取异常保护（try/except extract_async）
+✅ C4: 2bf7909 — chat_service.py 固定快照 session 写入，并记录 state_revision 变化
 ✅ C5: d157dfd — chat_service.py 初始化降级（工厂函数 try/except 回退 RuleBased）
 ✅ H1: 70d2909 — time_reasoning.py 时区兼容（naive datetime 附加时区）
 ✅ H2: 332bbfa — turns.py datetime 类型统一（_parse_time 标准化 aware）
+✅ H3: 27d674b — feedback.py confirmation_accepted/rejected 集中推断
 ✅ H4: 内置 — calibration.py 冻结参考时间（reference_time 已固化）
 ✅ H5: 8b3ba42 — storage.py session() 空值守卫（_session_from_state + is not None）
 ✅ H6: 8b3ba42 — storage.py migrate 文件存在检查（_sqlite_has_app_state + overwrite）
 ✅ H7: d157dfd — chat_service.py intent 异常保护（try/except classify_async）
 ```
 
-### 📋 已知限制（标记为 MVP 约束）
+### 📋 剩余设计限制
 
 ```
-⚠️ C2: storage.py 投影表全量重建 — MVP 规模可接受，后续迭代增量更新
-⚠️ C4: chat_service.py 竞态条件 — 单用户应用，Uvicorn 单 worker 串行处理
+⚠️ C4 residual: 已发给模型的 prompt 仍可能基于旧快照；当前只记录 revision/session 变化，未做乐观重试
+⚠️ semantic: memory_embeddings 仍是本地 deterministic fallback，未接入真实 embedding/sqlite-vec
 ```
 
-### 🔧 待修复（仅剩 1 项）
+### 🔧 待修复（CRITICAL/HIGH 已清零）
 
 ```
-🔧 H3: feedback.py 补全 confirmation_accepted/rejected 信号 — 4行代码，不影响主线
+🔧 暂无 CRITICAL/HIGH 阻塞项；后续以体验校准、真实向量检索和并发一致性增强为主
 ```
 
 ### Phase 2：合并后首周
@@ -352,10 +356,11 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 
 ### Phase 3：后续迭代
 
-- SQLite 投影表增量更新（真正的 C2 修复）
+- 真实 embedding + `sqlite-vec` 方案评估与迁移设计
+- C4 residual：prompt 快照陈旧时的乐观重试或用户态提示策略
 - 参数文件异常处理加固（M7, M8）
 - 反馈闭环完善（M3, M4, M15–M22）
-- 语义搜索升级为真实 embedding
+- 校准案例扩容到 50-100 条真实失败样本
 
 ---
 
@@ -365,12 +370,12 @@ LLM 回复成功获取后，`self.memory_extractor.extract_async()` 无 `try/exc
 |------|------|------|
 | 功能完整性 | ⭐⭐⭐⭐⭐ | 从基础 CRUD 升级为意图驱动+反馈闭环+可切换存储 |
 | 代码架构 | ⭐⭐⭐⭐⭐ | Protocol 抽象 + 双通道可切换 + 参数集中化管理 |
-| 代码质量 | ⭐⭐⭐ | 12 个 CRITICAL+HIGH 需修复，路径明确范围有限 |
-| 测试覆盖 | ⭐⭐⭐⭐ | 80 逻辑测试 + 18 校准全通过，部分降级路径缺失 |
+| 代码质量 | ⭐⭐⭐⭐ | CRITICAL/HIGH 审计项已修复或缓解，剩余主要是长期设计取舍 |
+| 测试覆盖 | ⭐⭐⭐⭐⭐ | 127 逻辑测试 + 24 校准全通过，覆盖确认反馈、异步写入和 SQLite 投影 |
 | 向后兼容 | ⭐⭐⭐⭐⭐ | JSON+rule 模式完全兼容，新增配置均有默认值 |
 | 可观测性 | ⭐⭐⭐⭐⭐ | 调试面板 + 40+ 字段 manifest + API 请求日志 |
 | 文档 | ⭐⭐⭐⭐ | README 详尽，调参指南完善，路线图审计清晰 |
 
-**综合评分: 4.5 / 5.0（第二轮更新后 ↑0.4）**
+**综合评分: 4.7 / 5.0（后续迭代分支更新后 ↑0.6）**
 
-**建议批准合并至 master。** 12 个 CRITICAL+HIGH 问题中 9 个已修复，2 个标注为已知 MVP 约束，仅剩 H3（confirmation 信号）为低影响待修复项。所有修复均有回归测试覆盖（+11 新测试，+6 校准案例）。
+**建议后续以 PR/合并请求方式合并至 master。** 12 个 CRITICAL+HIGH 问题均已修复或缓解；剩余风险集中在真实 embedding、prompt 快照陈旧的乐观重试策略，以及更大规模真实校准集。

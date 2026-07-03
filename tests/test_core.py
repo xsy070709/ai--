@@ -1539,6 +1539,90 @@ def test_sqlite_projection_tolerates_duplicate_entity_ids(tmp_path) -> None:
     assert memory_count == 1
 
 
+def test_sqlite_projection_preserves_unchanged_memory_embeddings(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+    memory = make_memory("preference", "用户喜欢简洁直接的回复", 0.9, True, "回复风格")
+    memory["id"] = "mem_stable"
+
+    def add_memory(state):
+        state.setdefault("memories", []).append(memory)
+        return "ok"
+
+    assert store.mutate(add_memory) == "ok"
+    with store._connect() as db:
+        first_embedding = db.execute(
+            "SELECT rowid, vector_json FROM memory_embeddings WHERE memory_id = 'mem_stable'"
+        ).fetchone()
+        first_fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_stable'").fetchone()[
+            "count"
+        ]
+
+    def add_unrelated_log(state):
+        state.setdefault("generation_logs", []).append(
+            {"id": "log_unrelated", "purpose": "chat", "created_at": "2026-07-03T10:03:00+08:00"}
+        )
+        return "ok"
+
+    assert store.mutate(add_unrelated_log) == "ok"
+    with store._connect() as db:
+        second_embedding = db.execute(
+            "SELECT rowid, vector_json FROM memory_embeddings WHERE memory_id = 'mem_stable'"
+        ).fetchone()
+        second_fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_stable'").fetchone()[
+            "count"
+        ]
+
+    assert first_embedding["rowid"] == second_embedding["rowid"]
+    assert first_embedding["vector_json"] == second_embedding["vector_json"]
+    assert first_fts_count == 1
+    assert second_fts_count == 1
+
+
+def test_sqlite_projection_deletes_removed_memory_rows(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+    memory = make_memory("preference", "用户喜欢简洁直接的回复", 0.9, True, "回复风格")
+    memory["id"] = "mem_removed"
+
+    def add_memory(state):
+        state.setdefault("memories", []).append(memory)
+        return "ok"
+
+    def remove_memory(state):
+        state["memories"] = []
+        return "ok"
+
+    assert store.mutate(add_memory) == "ok"
+    assert store.mutate(remove_memory) == "ok"
+    with store._connect() as db:
+        memory_count = db.execute("SELECT COUNT(*) AS count FROM memories WHERE id = 'mem_removed'").fetchone()["count"]
+        embedding_count = db.execute(
+            "SELECT COUNT(*) AS count FROM memory_embeddings WHERE memory_id = 'mem_removed'"
+        ).fetchone()["count"]
+        fts_count = db.execute("SELECT COUNT(*) AS count FROM memory_fts WHERE memory_id = 'mem_removed'").fetchone()["count"]
+
+    assert memory_count == 0
+    assert embedding_count == 0
+    assert fts_count == 0
+
+
 def test_sqlite_lists_memories_from_projection(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
