@@ -35,6 +35,7 @@ from app.memory import (
     tidy_memories,
     upsert_memories,
 )
+from app.memory.feedback import _dedupe_signals
 from app.memory.text import unfinished_items
 from app.memory.text import emotion_cause, topics_from_text
 from app.memory.initiative import build_disclosure_plan
@@ -260,11 +261,33 @@ def test_feedback_signals_use_intent_invitation_and_density() -> None:
     assert "disclosure_not_engaged" not in signal_types
 
 
+def test_feedback_signals_track_tone_only_engagement() -> None:
+    previous_log = {"prompt_manifest": {"disclosure_mode": "tone_only", "used_memory_reasons": {"mem_1": "项目压力"}}}
+    current_manifest = {"intent": {"topics": ["项目"], "information_density": 2.4}}
+
+    signals = infer_feedback_signals("我还是卡在项目验收这里，有点顶不住", previous_log=previous_log, current_manifest=current_manifest)
+
+    assert {signal["type"] for signal in signals} == {"tone_guidance_engaged"}
+    assert signals[0]["parameters"] == ["disclosure.mention_recall_threshold"]
+
+
 def test_feedback_signals_use_configured_invitation_words() -> None:
     signals = infer_feedback_signals("刚才说那个后来呢", current_manifest={})
 
     assert has_followup_invitation("刚才说那个后来呢")
     assert {signal["type"] for signal in signals} == {"user_invited_recall"}
+
+
+def test_feedback_signal_dedupe_preserves_distinct_evidence() -> None:
+    signals = _dedupe_signals(
+        [
+            {"type": "memory_surface_issue", "reason": "审计发现过度表露", "parameters": ["disclosure.mention_recall_threshold"]},
+            {"type": "memory_surface_issue", "reason": "审计发现过度表露", "parameters": ["disclosure.mention_recall_threshold"]},
+            {"type": "memory_surface_issue", "reason": "用户没有接住表露", "parameters": ["disclosure.mention_recall_threshold"]},
+        ]
+    )
+
+    assert [signal["reason"] for signal in signals] == ["审计发现过度表露", "用户没有接住表露"]
 
 
 def test_feedback_signals_emit_confirmation_results() -> None:
@@ -304,6 +327,9 @@ def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     conservative_suggestions = {item["parameter"]: item["direction"] for item in conservative_report["suggestions"]}
     assert conservative_suggestions["quality.auto_accept_min_confidence"] == "decrease"
     assert conservative_report["parameter_evidence"]["quality.auto_accept_min_confidence"]["positive"] == 3
+
+    tone_report = analyze_feedback([{"feedback_signals": [{"type": "tone_guidance_engaged"}]}])
+    assert tone_report["parameter_evidence"]["disclosure.mention_recall_threshold"]["positive"] == 1
 
 
 def test_memory_calibration_cases_pass_current_baseline() -> None:

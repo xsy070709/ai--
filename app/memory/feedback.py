@@ -23,6 +23,7 @@ POSITIVE_SIGNALS = {
     "open_loop_closed",
     "user_invited_recall",
     "disclosure_engaged",
+    "tone_guidance_engaged",
     "confirmation_accepted",
 }
 NEGATIVE_SIGNALS = {
@@ -45,6 +46,7 @@ SIGNAL_PARAMETERS = {
     "memory_surface_issue": ["disclosure.mention_recall_threshold"],
     "disclosure_not_engaged": ["disclosure.mention_recall_threshold"],
     "disclosure_engaged": ["disclosure.mention_recall_threshold"],
+    "tone_guidance_engaged": ["disclosure.mention_recall_threshold"],
 }
 
 
@@ -90,6 +92,9 @@ def infer_feedback_signals(
             signals.append(_signal("disclosure_not_engaged", "AI 表露记忆后用户没有接续相关话题", ["disclosure.mention_recall_threshold"]))
         elif _is_high_density(user_text, intent) or _topic_continues(user_text, previous_manifest, intent):
             signals.append(_signal("disclosure_engaged", "AI 表露记忆后用户继续深入回应", ["disclosure.mention_recall_threshold"]))
+    if previous_manifest.get("disclosure_mode") == "tone_only":
+        if _is_high_density(user_text, intent) or _topic_continues(user_text, previous_manifest, intent):
+            signals.append(_signal("tone_guidance_engaged", "AI 只调整语气后用户继续深入回应", ["disclosure.mention_recall_threshold"]))
 
     return _dedupe_signals(signals)
 
@@ -241,7 +246,7 @@ def _dedupe_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen = set()
     deduped = []
     for signal in signals:
-        key = signal["type"]
+        key = (signal["type"], signal.get("reason"), tuple(signal.get("parameters") or []))
         if key in seen:
             continue
         seen.add(key)
