@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+import pytest
+
 from app.chat_service import ChatService
 from app.config import Settings
 from app.llm_gateway import DeepSeekGateway, LLMResult
@@ -1411,6 +1413,38 @@ def test_sqlite_store_implements_snapshot_mutate_and_search(tmp_path) -> None:
     assert embedding_count == 1
 
 
+def test_storage_session_lookup_does_not_treat_empty_session_as_missing(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    json_store = JsonStore(settings)
+
+    def add_empty_session(state):
+        state.setdefault("sessions", {})["empty"] = {}
+        return None
+
+    json_store.mutate(add_empty_session)
+    assert json_store.session("empty") == {}
+
+    sqlite_settings = Settings(
+        data_dir=tmp_path / "sqlite",
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    sqlite_store = SqliteStore(sqlite_settings)
+    sqlite_store.mutate(add_empty_session)
+    assert sqlite_store.session("empty") == {}
+
+
 def test_sqlite_projection_tolerates_duplicate_entity_ids(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
@@ -1600,6 +1634,36 @@ def test_migrate_json_to_sqlite_keeps_json_backup_and_imports_state(tmp_path) ->
     assert sqlite_path.exists()
     assert (tmp_path / "store.json").exists()
     assert sqlite_store.snapshot()["memories"][0]["content"] == "用户喜欢安静一点的回复"
+
+
+def test_migrate_json_to_sqlite_refuses_to_overwrite_existing_state(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+
+    def seed_json(state):
+        state.setdefault("memories", []).append(make_memory("preference", "用户喜欢安静一点的回复", 0.9, True, "记住"))
+        return state
+
+    def seed_sqlite(state):
+        state.setdefault("memories", []).append(make_memory("fact", "已有 SQLite 记忆", 0.7, False, "已有"))
+        return state
+
+    JsonStore(settings).mutate(seed_json)
+    sqlite_store = SqliteStore(settings)
+    sqlite_store.mutate(seed_sqlite)
+
+    with pytest.raises(FileExistsError):
+        migrate_json_to_sqlite(settings)
+
+    assert sqlite_store.snapshot()["memories"][0]["content"] == "已有 SQLite 记忆"
+    migrate_json_to_sqlite(settings, overwrite=True)
+    assert SqliteStore(settings).snapshot()["memories"][0]["content"] == "用户喜欢安静一点的回复"
 
 
 def test_chat_service_can_use_structured_memory_extractor(tmp_path) -> None:

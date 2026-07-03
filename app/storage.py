@@ -99,8 +99,7 @@ class JsonStore:
 
     def session(self, session_id: str = "default") -> dict[str, Any]:
         state = self.snapshot()
-        sessions = state.setdefault("sessions", {})
-        return sessions.get(session_id) or sessions[state["active_session_id"]]
+        return _session_from_state(state, session_id)
 
     def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         memories = [
@@ -311,8 +310,7 @@ class SqliteStore:
 
     def session(self, session_id: str = "default") -> dict[str, Any]:
         state = self.snapshot()
-        sessions = state.setdefault("sessions", {})
-        return sessions.get(session_id) or sessions[state["active_session_id"]]
+        return _session_from_state(state, session_id)
 
     def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         with self._connect() as db:
@@ -422,6 +420,14 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("generation_logs", [])
     normalized.setdefault("memory_confirmations", [])
     return normalized
+
+
+def _session_from_state(state: dict[str, Any], session_id: str) -> dict[str, Any]:
+    sessions = state.setdefault("sessions", {})
+    session = sessions.get(session_id)
+    if session is not None:
+        return session
+    return sessions[state["active_session_id"]]
 
 
 def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> None:
@@ -538,10 +544,29 @@ def _fts_query(query: str) -> str:
     return " OR ".join(f'"{term}"' for term in terms)
 
 
-def migrate_json_to_sqlite(settings: Settings) -> Path:
+def migrate_json_to_sqlite(settings: Settings, *, overwrite: bool = False) -> Path:
     json_store = JsonStore(settings)
+    sqlite_path = settings.data_dir / "store.sqlite3"
+    if not overwrite and _sqlite_has_app_state(sqlite_path):
+        raise FileExistsError(f"SQLite store already has app_state: {sqlite_path}")
     sqlite_store = SqliteStore(settings, seed_state=json_store.snapshot())
     return sqlite_store.path
+
+
+def _sqlite_has_app_state(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with sqlite3.connect(path) as db:
+            table = db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'app_state'"
+            ).fetchone()
+            if table is None:
+                return False
+            row = db.execute("SELECT COUNT(*) FROM app_state").fetchone()
+            return bool(row and row[0] > 0)
+    except sqlite3.DatabaseError as exc:
+        raise FileExistsError(f"SQLite store exists but cannot be inspected safely: {path}") from exc
 
 
 def create_store(settings: Settings) -> StorageBackend:
