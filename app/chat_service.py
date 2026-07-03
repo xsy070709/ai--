@@ -25,6 +25,7 @@ from .memory import (
     tidy_memories,
     upsert_memories,
     work_memory,
+    DEFAULT_MEMORY_PARAMS,
     DEFAULT_MEMORY_PROFILE,
 )
 from .persona import active_persona_text, initialize_persona
@@ -129,9 +130,22 @@ class ChatService:
         time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
         memory_user_text = logical_turn["text"]
-        memory_context = build_memory_context(state.get("memories", []), memory_user_text, now=time_context["iso"])
+        all_memories = state.get("memories", [])
+        recall_candidates = self._memory_recall_candidates(all_memories, memory_user_text)
+        memory_context = build_memory_context(
+            all_memories,
+            memory_user_text,
+            now=time_context["iso"],
+            recall_memories=recall_candidates,
+        )
         intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
-        memory_context = build_memory_context(state.get("memories", []), memory_user_text, now=time_context["iso"], intent=intent)
+        memory_context = build_memory_context(
+            all_memories,
+            memory_user_text,
+            now=time_context["iso"],
+            intent=intent,
+            recall_memories=recall_candidates,
+        )
         extraction_text = user_text if intent.get("has_completion_signal") else memory_user_text
         memories = memory_context["recalled"]
         prompt_summaries = session.get("summaries", [])
@@ -194,6 +208,9 @@ class ChatService:
                 "logical_turn": logical_turn,
                 "used_memory_ids": [m["id"] for m in memories],
                 "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
+                "recall_candidate_count": len(recall_candidates),
+                "recall_candidate_ids": [m.get("id") for m in recall_candidates],
+                "recall_candidate_source": "storage_search_plus_priority",
                 "new_memory_ids": [m["id"] for m in reviewed["accepted"]],
                 "corrected_memory_ids": [m["id"] for m in correction_result["corrected"]],
                 "deleted_memory_ids": [m["id"] for m in correction_result["deleted"]],
@@ -316,6 +333,25 @@ class ChatService:
     def _active_persona(self, state: dict[str, Any]) -> dict[str, Any] | None:
         active_id = state.get("active_persona_id")
         return next((p for p in state.get("persona_versions", []) if p["id"] == active_id), None)
+
+    def _memory_recall_candidates(self, memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
+        limit = max(DEFAULT_MEMORY_PARAMS.recall.default_limit * 4, DEFAULT_MEMORY_PARAMS.recall.default_limit)
+        candidates: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def add(memory: dict[str, Any]) -> None:
+            memory_id = memory.get("id")
+            if not memory_id or memory_id in seen_ids or memory.get("status") != "active":
+                return
+            candidates.append(memory)
+            seen_ids.add(memory_id)
+
+        for memory in self.store.search_memories(user_text, limit=limit):
+            add(memory)
+        for memory in memories:
+            if memory.get("open") or memory.get("type") in {"boundary", "response_rule"} or memory.get("is_user_confirmed"):
+                add(memory)
+        return candidates
 
     def _build_prompt(
         self,

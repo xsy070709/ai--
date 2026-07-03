@@ -542,6 +542,15 @@ def test_memory_context_prioritizes_open_and_emotional_recall() -> None:
     assert "待跟进" in context["prompt_text"]
 
 
+def test_memory_context_respects_empty_recall_candidates() -> None:
+    memory = make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠")
+
+    context = build_memory_context([memory], "我最近睡不好", recall_memories=[])
+
+    assert not context["recalled"]
+    assert context["profile"]["emotion_patterns"]
+
+
 def test_memory_context_uses_intent_to_override_casual_followup() -> None:
     memory = make_memory("goal", "待跟进：整理项目材料", 0.8, False, "整理项目材料", open_item=True)
     memory["recall_score"] = 4.8
@@ -855,6 +864,61 @@ def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     assert result["degraded"] is True
     assert service.memories()
     assert (tmp_path / "store.sqlite3").exists()
+
+
+def test_chat_service_uses_storage_search_for_recall_candidates(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+
+    def seed_memory(state):
+        state.setdefault("memories", []).append(
+            make_memory("emotion_pattern", "用户最近失眠严重", 0.8, False, "睡眠")
+        )
+        return None
+
+    service.store.mutate(seed_memory)
+    result = asyncio.run(service.chat("我最近睡不好"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    assert result["used_memories"]
+    assert latest_log["prompt_manifest"]["recall_candidate_source"] == "storage_search_plus_priority"
+    assert set(result["used_memories"]).issubset(set(latest_log["prompt_manifest"]["recall_candidate_ids"]))
+
+
+def test_chat_service_keeps_priority_memories_when_search_misses(tmp_path) -> None:
+    class SearchMissJsonStore(JsonStore):
+        def search_memories(self, query: str, limit: int = 8):
+            return []
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(SearchMissJsonStore(settings), DeepSeekGateway(settings))
+
+    def seed_memory(state):
+        state.setdefault("memories", []).append(
+            make_memory("goal", "待跟进：整理项目材料", 0.8, False, "整理项目材料", open_item=True)
+        )
+        return None
+
+    service.store.mutate(seed_memory)
+    result = asyncio.run(service.chat("项目后来怎么样"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    assert result["used_memories"]
+    assert "待跟进" in next(iter(latest_log["prompt_manifest"]["used_memory_reasons"].values()))
 
 
 def test_chat_service_injects_session_summaries_into_prompt(tmp_path) -> None:

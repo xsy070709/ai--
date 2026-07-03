@@ -14,9 +14,11 @@ def build_memory_context(
     limit: int = 8,
     now: str | None = None,
     intent: dict[str, Any] | None = None,
+    recall_memories: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     profile = build_user_profile(memories, now=now)
-    recalled = relevant_memories(memories, user_text, limit=limit, now=now)
+    recall_source = memories if recall_memories is None else recall_memories
+    recalled = relevant_memories(recall_source, user_text, limit=limit, now=now)
     followup_plan = build_followup_plan(profile, recalled, user_text, now=now, intent=intent)
     disclosure_plan = build_disclosure_plan(recalled, user_text, followup_plan, intent=intent)
     return {
