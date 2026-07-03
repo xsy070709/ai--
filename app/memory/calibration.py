@@ -9,31 +9,35 @@ from .extraction import extract_memory_candidates
 from .feedback import infer_feedback_signals
 from .lifecycle import upsert_memories
 
+DEFAULT_REFERENCE_TIME = "2026-07-03T09:00:00+08:00"
 
-def evaluate_calibration_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    results = [_evaluate_case(case) for case in cases]
+
+def evaluate_calibration_cases(cases: list[dict[str, Any]], reference_time: str = DEFAULT_REFERENCE_TIME) -> dict[str, Any]:
+    results = [_evaluate_case(case, reference_time=reference_time) for case in cases]
     total = len(results)
     passed = len([result for result in results if result["passed"]])
     return {
         "total": total,
         "passed": passed,
         "score": round(passed / total, 3) if total else 0.0,
+        "reference_time": reference_time,
         "results": results,
     }
 
 
-def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_case(case: dict[str, Any], *, reference_time: str) -> dict[str, Any]:
+    case_reference_time = case.get("reference_time", reference_time)
     memories = []
     for seed in case.get("seed_memories", []):
-        upsert_memories(memories, extract_memory_candidates(seed))
+        upsert_memories(memories, extract_memory_candidates(seed, reference_time=case_reference_time))
 
-    extracted = extract_memory_candidates(case.get("user_text", ""))
+    extracted = extract_memory_candidates(case.get("user_text", ""), reference_time=case_reference_time)
     extracted_types = {memory["type"] for memory in extracted}
     expected_types = set(case.get("expected_memory_types", []))
     unexpected_types = set(case.get("unexpected_memory_types", []))
 
     intent = case.get("intent")
-    context = build_memory_context(memories, case.get("user_text", ""), intent=intent)
+    context = build_memory_context(memories, case.get("user_text", ""), now=case_reference_time, intent=intent)
     recalled_contents = [memory.get("content", "") for memory in context["recalled"]]
     expected_recall = case.get("expected_recall_contains", [])
     unexpected_recall = case.get("unexpected_recall_contains", [])
@@ -89,7 +93,9 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "name": case.get("name", "unnamed"),
         "passed": all(checks.values()),
         "checks": checks,
+        "reference_time": case_reference_time,
         "extracted_types": sorted(extracted_types),
+        "extracted_deadlines": [memory.get("due_at") for memory in extracted if memory.get("due_at")],
         "recalled": recalled_contents,
         "disclosure_mode": context["disclosure_plan"]["mode"],
         "followup_mode": context["followup_plan"]["mode"],

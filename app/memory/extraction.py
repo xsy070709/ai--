@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 from .schema import make_memory
@@ -9,7 +10,7 @@ from .text import clean_text, emotion_cause, emotion_tags, first_sentence, infer
 from .time_reasoning import infer_deadline
 
 
-def extract_memory_candidates(user_text: str, assistant_text: str = "") -> list[dict[str, Any]]:
+def extract_memory_candidates(user_text: str, assistant_text: str = "", *, reference_time: datetime | str | None = None) -> list[dict[str, Any]]:
     text = clean_text(user_text)
     candidates: list[dict[str, Any]] = []
     candidates.extend(_extract_explicit_memory(text))
@@ -21,7 +22,35 @@ def extract_memory_candidates(user_text: str, assistant_text: str = "") -> list[
     candidates.extend(_extract_relationship_signals(text))
     candidates.extend(_extract_shared_experiences(text))
     candidates.extend(_extract_episodic_memory(text))
+    if reference_time is not None:
+        _stamp_reference_time(candidates, reference_time)
     return _dedupe(candidates)
+
+
+def _stamp_reference_time(candidates: list[dict[str, Any]], reference_time: datetime | str) -> None:
+    reference = _reference_iso(reference_time)
+    for memory in candidates:
+        memory["created_at"] = reference
+        memory["updated_at"] = reference
+        if memory.get("last_reinforced_at"):
+            memory["last_reinforced_at"] = reference
+        for evidence in memory.get("evidence", []):
+            evidence["created_at"] = reference
+        if memory.get("type") == "goal" and memory.get("open"):
+            evidence_text = memory.get("evidence", [{}])[0].get("text", memory.get("content", ""))
+            deadline = infer_deadline(evidence_text, reference)
+            if deadline:
+                memory.update(deadline)
+
+
+def _reference_iso(reference_time: datetime | str) -> str:
+    if isinstance(reference_time, datetime):
+        value = reference_time
+    else:
+        value = datetime.fromisoformat(reference_time)
+    if value.tzinfo is None:
+        value = value.astimezone()
+    return value.isoformat(timespec="seconds")
 
 
 def _extract_explicit_memory(text: str) -> list[dict[str, Any]]:
