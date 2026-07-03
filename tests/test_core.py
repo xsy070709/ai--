@@ -1226,6 +1226,58 @@ def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     assert (tmp_path / "store.sqlite3").exists()
 
 
+def test_chat_service_pins_write_session_when_active_session_changes_during_await(tmp_path) -> None:
+    class ActiveSessionSwitchGateway:
+        def __init__(self, settings, store):
+            self.settings = settings
+            self.store = store
+
+        async def chat(self, messages, purpose="chat"):
+            def switch_active_session(state):
+                state.setdefault("sessions", {})["other"] = {
+                    "id": "other",
+                    "title": "另一个会话",
+                    "created_at": "2026-07-03T10:00:00+08:00",
+                    "updated_at": "2026-07-03T10:00:00+08:00",
+                    "messages": [],
+                    "summaries": [],
+                }
+                state["active_session_id"] = "other"
+                return None
+
+            self.store.mutate(switch_active_session)
+            return LLMResult(text="我先记下。", provider="fake", model="fake", degraded=False, elapsed_ms=1)
+
+        def debug_requests(self):
+            return []
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    store = JsonStore(settings)
+    service = ChatService(store, ActiveSessionSwitchGateway(settings, store))
+
+    result = asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+
+    state = service.store.snapshot()
+    latest_log = state["generation_logs"][-1]
+    manifest = latest_log["prompt_manifest"]
+    assert result["reply"] == "我先记下。"
+    assert [message["role"] for message in state["sessions"]["default"]["messages"]] == ["user", "assistant"]
+    assert state["sessions"]["other"]["messages"] == []
+    assert state["active_session_id"] == "other"
+    assert manifest["snapshot_session_id"] == "default"
+    assert manifest["write_session_id"] == "default"
+    assert manifest["active_session_changed"] is True
+    assert manifest["state_revision_changed"] is True
+    assert manifest["commit_state_revision"] > manifest["snapshot_state_revision"]
+
+
 def test_chat_service_memories_uses_projection_interface(tmp_path) -> None:
     class ProjectionOnlyStore(JsonStore):
         def snapshot(self):

@@ -23,6 +23,7 @@ def new_id(prefix: str) -> str:
 def default_state() -> dict[str, Any]:
     session_id = "default"
     return {
+        "state_revision": 0,
         "active_session_id": session_id,
         "sessions": {
             session_id: {
@@ -94,6 +95,7 @@ class JsonStore:
         with self._lock:
             state = self._read()
             result = fn(state)
+            _bump_state_revision(state)
             self._write(state)
             return result
 
@@ -305,6 +307,7 @@ class SqliteStore:
         with self._lock:
             state = self._read_state() or default_state()
             result = fn(state)
+            _bump_state_revision(state)
             self._write_state(state)
             return result
 
@@ -414,12 +417,24 @@ class SqliteStore:
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(default_state())
     normalized.update(state)
+    normalized.setdefault("state_revision", 0)
     normalized.setdefault("sessions", {})
     normalized.setdefault("persona_versions", [])
     normalized.setdefault("memories", [])
     normalized.setdefault("generation_logs", [])
     normalized.setdefault("memory_confirmations", [])
     return normalized
+
+
+def _state_revision(state: dict[str, Any]) -> int:
+    try:
+        return int(state.get("state_revision", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_state_revision(state: dict[str, Any]) -> None:
+    state["state_revision"] = _state_revision(state) + 1
 
 
 def _session_from_state(state: dict[str, Any], session_id: str) -> dict[str, Any]:

@@ -17,6 +17,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 | Keyword flexibility and intent | Partially implemented | `StructuredLLMIntentClassifier`, rule fallback, centralized keyword groups and topic aliases | Rule fallback still needs broader phrase coverage; LLM classifier is optional rather than always-on. |
 | Prompt/summary observability | MVP implemented | prompt segments, `prompt_manifest`, `system_segments`, summary boundary fixes | Runtime service restart may still be needed after backend edits in local sessions. |
 | Runtime fallback safety | MVP implemented | Chat service factory, intent-classifier, and memory-extractor exception tests | Gateway chat failures still surface as chat failures because no assistant reply exists to preserve. |
+| Async write consistency | MVP implemented | `state_revision` tracking, pinned chat write session, active-session race tests | Concurrent mutations can still make the already-sent prompt stale; the mismatch is now logged for audit rather than silently hidden. |
 
 ## Roadmap Notes
 
@@ -35,6 +36,7 @@ Remaining risk: this is a practical local semantic layer. It does not yet use ex
 - The storage contract now supports both JSON and SQLite backends through `StorageBackend`.
 - SQLite includes FTS and derived embedding tables, plus migration from existing JSON state.
 - JSON and SQLite session lookup now treats only missing sessions as fallback candidates, and JSON-to-SQLite migration refuses to overwrite existing SQLite state unless explicitly requested.
+- Storage writes maintain a monotonic `state_revision` so chat logs can detect mutations that happened between prompt snapshot and final write.
 - Chat recall can use backend search candidates instead of relying only on full in-memory scans.
 - Read-only memory lists, status profile construction, debug logs, and feedback analysis can use storage projection interfaces instead of reading those collections from the full state snapshot.
 
@@ -55,6 +57,7 @@ Remaining risk: calibration coverage is still small. The labeled baseline now co
 - Topic words, topic aliases, invitation words, audit anchors, and signal groups are centralized rather than scattered.
 - The structured LLM intent path exists and falls back to deterministic rules when unavailable.
 - Chat service initialization and per-turn intent classification fall back to deterministic rules if the configured classifier path raises.
+- Chat writes pin the snapshot session id and record revision/session changes in `prompt_manifest`, preventing active-session races from silently writing replies to a different session.
 - Rule intent now preserves actual information-density scores instead of flattening them away.
 - Rule fallback now covers additional completion/deletion phrases and comma-style corrections such as `不是 X，是 Y`.
 - Rule signal coverage now includes slang fatigue/avoidance and mixed-language anxiety expressions such as `摆烂`, `躺平`, and `very anxious`.

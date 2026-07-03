@@ -137,7 +137,9 @@ class ChatService:
         user_message = {"id": new_id("msg"), "role": "user", "content": user_text, "created_at": now_iso()}
 
         state = self.store.snapshot()
-        session = state["sessions"][state["active_session_id"]]
+        snapshot_session_id = state["active_session_id"]
+        snapshot_state_revision = _state_revision(state)
+        session = state["sessions"][snapshot_session_id]
         persona = self._active_persona(state)
         time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
@@ -206,7 +208,10 @@ class ChatService:
         reviewed = review_memory_candidates(extracted)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
-            active_session = next_state["sessions"][next_state["active_session_id"]]
+            write_session_id = snapshot_session_id if snapshot_session_id in next_state["sessions"] else next_state["active_session_id"]
+            active_session = next_state["sessions"][write_session_id]
+            commit_state_revision = _state_revision(next_state)
+            active_session_changed = next_state.get("active_session_id") != snapshot_session_id
             active_session["messages"].extend([user_message, assistant_message])
             active_session["updated_at"] = now_iso()
             summaries = active_session.setdefault("summaries", [])
@@ -234,6 +239,12 @@ class ChatService:
                 "used_session_summary_ids": [summary.get("id") for summary in prompt_summaries[-3:]],
                 "prompt_segments": _prompt_segments(model_messages),
                 "logical_turn": logical_turn,
+                "snapshot_session_id": snapshot_session_id,
+                "write_session_id": write_session_id,
+                "active_session_changed": active_session_changed,
+                "snapshot_state_revision": snapshot_state_revision,
+                "commit_state_revision": commit_state_revision,
+                "state_revision_changed": commit_state_revision != snapshot_state_revision,
                 "used_memory_ids": [m["id"] for m in memories],
                 "used_memory_reasons": {m["id"]: m.get("recall_reason") for m in memories},
                 "recall_candidate_count": len(recall_candidates),
@@ -425,6 +436,13 @@ class ChatService:
             "in_process_api_requests": api_requests,
             "latest_chat": _latest_chat_flow(generation_logs, api_requests),
         }
+
+
+def _state_revision(state: dict[str, Any]) -> int:
+    try:
+        return int(state.get("state_revision", 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _latest_chat_flow(generation_logs: list[dict[str, Any]], api_requests: list[dict[str, Any]]) -> dict[str, Any]:
