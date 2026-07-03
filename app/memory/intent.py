@@ -126,6 +126,14 @@ def _correction_new_value(user_text: str) -> str | None:
     for marker in ["改成", "其实是", "而是"]:
         if marker in user_text:
             return user_text.split(marker, 1)[1].strip("，, 。.!！") or None
+    if "不是" in user_text:
+        tail = user_text.split("不是", 1)[1]
+        for separator in ["，是", ",是", "，", ","]:
+            if separator in tail:
+                value = tail.split(separator, 1)[1].strip("，, 。.!！")
+                if value.startswith("是"):
+                    value = value[1:].strip("，, 。.!！")
+                return value or None
     return None
 
 

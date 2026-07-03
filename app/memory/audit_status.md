@@ -51,6 +51,7 @@ Remaining risk: calibration coverage is still small. The labeled baseline now co
 - Topic words, topic aliases, invitation words, audit anchors, and signal groups are centralized rather than scattered.
 - The structured LLM intent path exists and falls back to deterministic rules when unavailable.
 - Rule intent now preserves actual information-density scores instead of flattening them away.
+- Rule fallback now covers additional completion/deletion phrases and comma-style corrections such as `不是 X，是 Y`.
 
 Remaining risk: alias coverage is still curated and small; there is no trained classifier or always-on semantic intent model yet.
 
@@ -63,11 +64,11 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py` (exits non-zero when any case fails)
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers eighteen cases with a perfect score.
+Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers twenty-one cases with a perfect score.
 
 ## Next Iteration Candidates
 
-1. Continue expanding `data/memory_calibration_cases.json` toward 50-100 labeled cases, especially around subtle over-disclosure, mixed-language intent, and repeated follow-up fatigue.
+1. Continue expanding `data/memory_calibration_cases.json` toward 50-100 labeled cases, especially around subtle over-disclosure, mixed-language intent, repeated follow-up fatigue, and colloquial correction/deletion phrases.
 2. Decide whether to integrate real embeddings plus `sqlite-vec`, or keep the deterministic local semantic fallback for the MVP.
 3. Broaden the curated synonym/phrase map for topic and intent signals using real chat failures.
 4. Continue narrowing full-snapshot reads where mutation semantics do not require the whole JSON-compatible state.

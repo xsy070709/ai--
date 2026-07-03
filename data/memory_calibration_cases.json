@@ -192,5 +192,43 @@
     "user_text": "今天 really very tired，什么都不想动",
     "expected_memory_types": ["emotion_pattern"],
     "unexpected_memory_types": ["goal", "preference"]
+  },
+  {
+    "name": "expanded completion phrase resolves followup",
+    "seed_memories": ["明天下午我要交材料，现在有点焦虑。"],
+    "user_text": "材料忙完了，终于搞完",
+    "expected_followup_mode": "acknowledge_closure",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进：材料"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_resolved"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
+  },
+  {
+    "name": "expanded deletion phrase mutates memory",
+    "seed_memories": ["记住我喜欢深夜复盘"],
+    "user_text": "这条不用存，深夜复盘那个",
+    "expected_deleted_contains": ["深夜复盘"],
+    "unexpected_created_memory_types": ["goal"]
+  },
+  {
+    "name": "comma correction intent keeps new value",
+    "seed_memories": ["明天周三下午要面试。"],
+    "user_text": "不是周三，是周五下午面试",
+    "expected_corrected_contains": ["周三"],
+    "expected_created_memory_types": ["goal"],
+    "intent": {
+      "has_correction_intent": true,
+      "correction_action": "correct",
+      "correction_query": "周三",
+      "correction_new_value": "周五下午面试",
+      "is_casual_chat": false,
+      "information_density": 2.9
+    }
   }
 ]

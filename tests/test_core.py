@@ -470,6 +470,23 @@ def test_rule_based_intent_uses_configured_completion_targets() -> None:
     assert intent["completion_target"] == "汇报"
 
 
+def test_rule_based_intent_handles_expanded_completion_and_deletion_phrases() -> None:
+    completion = RuleBasedIntentClassifier().classify("材料忙完了，终于搞完")
+    deletion = RuleBasedIntentClassifier().classify("这条不用存，深夜复盘那个")
+
+    assert completion["has_completion_signal"] is True
+    assert completion["completion_target"] == "材料"
+    assert deletion["has_correction_intent"] is True
+    assert deletion["correction_action"] == "delete"
+
+
+def test_rule_based_intent_extracts_comma_correction_new_value() -> None:
+    intent = RuleBasedIntentClassifier().classify("不是周三，是周五下午面试")
+
+    assert intent["correction_query"] == "周三"
+    assert intent["correction_new_value"] == "周五下午面试"
+
+
 def test_topics_use_configured_topic_words() -> None:
     intent = RuleBasedIntentClassifier().classify("实习答辩材料还没准备好")
 

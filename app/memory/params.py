@@ -75,6 +75,8 @@ class ConversationParams:
         "解决了",
         "已经好了",
         "搞定",
+        "搞完",
+        "忙完",
         "收工",
         "完事",
         "办妥",
@@ -151,7 +153,20 @@ class SignalParams:
     vulnerable_events: tuple[str, ...] = ("分手", "失恋", "被辞", "吵架", "崩了", "破防", "撑不住", "绷不住", "心态炸")
     low_density_fillers: tuple[str, ...] = ("哈哈", "嘿嘿", "笑死", "天气不错", "还行", "没事", "早", "晚安", "嗯嗯")
     correction_words: tuple[str, ...] = ("不是", "记错", "不对", "错了", "改成", "其实是", "应该是")
-    deletion_words: tuple[str, ...] = ("别记", "不要记", "不用记", "忘掉", "删掉", "删了", "别存", "不要存", "忽略这条")
+    deletion_words: tuple[str, ...] = (
+        "别记",
+        "不要记",
+        "不用记",
+        "忘掉",
+        "删掉",
+        "删了",
+        "别存",
+        "不要存",
+        "不用存",
+        "别保留",
+        "不要保留",
+        "忽略这条",
+    )
 
 
 @dataclass(frozen=True)
