@@ -41,7 +41,7 @@ Remaining risk: the current semantic search is local and deterministic. Write-si
 
 - Tunable memory behavior is centralized in `MemoryParams`, with profiles and config-file overrides.
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
-- Calibration scripts provide a repeatable gate for positive and negative recall/follow-up/feedback expectations.
+- Calibration scripts provide an automation-friendly gate for positive and negative recall/follow-up/feedback expectations.
 - Feedback analysis now includes parameter metadata with current values, sensitivity, safe ranges, and expected adjustment effects for high-impact knobs.
 
 Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current thirteen cases before trusting parameter changes.
@@ -60,7 +60,7 @@ Use these gates for future memory-roadmap iterations:
 
 - `python -m pytest -q`
 - `python -m compileall -q app scripts tests`
-- `python scripts\evaluate_memory_calibration.py`
+- `python scripts\evaluate_memory_calibration.py` (exits non-zero when any case fails)
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
 Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers thirteen cases with a perfect score.

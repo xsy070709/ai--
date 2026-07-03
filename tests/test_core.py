@@ -41,6 +41,7 @@ from app.memory.signals import has_followup_invitation, information_density, loo
 from app.memory.summary import should_build_session_summary, work_memory
 from app.persona import initialize_persona
 from app.storage import JsonStore, SqliteStore, create_store, migrate_json_to_sqlite
+from scripts.evaluate_memory_calibration import exit_code_for_report
 
 
 class FakeStructuredGateway:
@@ -276,6 +277,11 @@ def test_memory_calibration_cases_pass_current_baseline() -> None:
     report = evaluate_calibration_cases(cases)
 
     assert report["score"] == 1.0
+
+
+def test_memory_calibration_exit_code_tracks_failures() -> None:
+    assert exit_code_for_report({"total": 2, "passed": 2}) == 0
+    assert exit_code_for_report({"total": 2, "passed": 1}) == 1
 
 
 def test_calibration_cases_can_check_followup_and_feedback() -> None:
