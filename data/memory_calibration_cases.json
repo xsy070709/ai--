@@ -2,7 +2,8 @@
   {
     "name": "short vulnerable event is remembered",
     "user_text": "我分手了",
-    "expected_memory_types": ["emotion_pattern", "episodic"]
+    "expected_memory_types": ["emotion_pattern", "episodic"],
+    "unexpected_memory_types": ["preference", "goal"]
   },
   {
     "name": "semantic sleep recall",
@@ -39,7 +40,8 @@
         }
       }
     },
-    "expected_feedback_signals": ["followup_resolved"]
+    "expected_feedback_signals": ["followup_resolved"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
   },
   {
     "name": "intent recall invitation is tracked",
@@ -51,7 +53,8 @@
       "information_density": 2.1
     },
     "expected_followup_mode": "gentle_follow_up",
-    "expected_feedback_signals": ["user_invited_recall"]
+    "expected_feedback_signals": ["user_invited_recall"],
+    "unexpected_feedback_signals": ["followup_topic_shift"]
   },
   {
     "name": "followup topic shift is tracked",
@@ -64,7 +67,8 @@
         }
       }
     },
-    "expected_feedback_signals": ["followup_topic_shift"]
+    "expected_feedback_signals": ["followup_topic_shift"],
+    "unexpected_feedback_signals": ["followup_engaged", "followup_resolved"]
   },
   {
     "name": "memory correction is tracked",
@@ -72,7 +76,8 @@
     "current_manifest": {
       "corrected_memory_ids": ["mem_1"]
     },
-    "expected_feedback_signals": ["memory_correction"]
+    "expected_feedback_signals": ["memory_correction"],
+    "unexpected_feedback_signals": ["followup_resolved", "followup_topic_shift"]
   },
   {
     "name": "memory deletion correction is tracked",
@@ -80,7 +85,9 @@
     "current_manifest": {
       "deleted_memory_ids": ["mem_1"]
     },
-    "expected_feedback_signals": ["memory_correction"]
+    "expected_feedback_signals": ["memory_correction"],
+    "unexpected_memory_types": ["goal"],
+    "unexpected_feedback_signals": ["followup_resolved", "followup_topic_shift"]
   },
   {
     "name": "over explicit boundary mention is audited",
@@ -99,6 +106,7 @@
     "expected_disclosure_mode": "tone_only",
     "expected_audit_status": "warn",
     "expected_audit_issues": ["over_explicit_tone_memory"],
+    "unexpected_audit_issues": ["forbidden_memory_surface"],
     "expected_feedback_signals": ["memory_surface_issue"]
   },
   {
@@ -126,6 +134,7 @@
         }
       }
     },
-    "expected_feedback_signals": ["disclosure_not_engaged"]
+    "expected_feedback_signals": ["disclosure_not_engaged"],
+    "unexpected_feedback_signals": ["disclosure_engaged", "user_invited_recall"]
   }
 ]

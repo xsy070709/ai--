@@ -320,6 +320,32 @@ def test_calibration_cases_can_check_memory_audit() -> None:
     assert result["checks"]["feedback_signals"] is True
 
 
+def test_calibration_cases_can_check_absent_outputs() -> None:
+    report = evaluate_calibration_cases(
+        [
+            {
+                "name": "casual shift should not engage followup",
+                "user_text": "哈哈哈",
+                "previous_log": {"prompt_manifest": {"followup_mode": "gentle_follow_up", "used_memory_reasons": {"mem_1": "待跟进：材料"}}},
+                "expected_feedback_signals": ["followup_topic_shift"],
+                "unexpected_feedback_signals": ["followup_engaged"],
+                "unexpected_memory_types": ["goal"],
+            },
+            {
+                "name": "negative guard fails when forbidden signal appears",
+                "user_text": "哈哈哈",
+                "previous_log": {"prompt_manifest": {"followup_mode": "gentle_follow_up", "used_memory_reasons": {"mem_1": "待跟进：材料"}}},
+                "unexpected_feedback_signals": ["followup_topic_shift"],
+            },
+        ]
+    )
+
+    assert report["results"][0]["passed"] is True
+    assert report["results"][0]["checks"]["unexpected_feedback_signals"] is True
+    assert report["results"][1]["passed"] is False
+    assert report["results"][1]["checks"]["unexpected_feedback_signals"] is False
+
+
 def test_semantic_similarity_handles_synonyms_without_token_overlap() -> None:
     assert semantic_similarity("我最近睡不好", "用户最近失眠严重") > 0.2
     assert semantic_similarity("秋招自我介绍还没准备好", "明天面试要准备简历") > 0.2
