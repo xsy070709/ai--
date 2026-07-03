@@ -16,6 +16,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 | Feedback and calibration loop | Partially implemented | `feedback.py`, `calibration.py`, `scripts/analyze_memory_feedback.py`, `scripts/evaluate_memory_calibration.py` | Feedback reports evidence, but there is no automatic optimizer or large labeled dataset. |
 | Keyword flexibility and intent | Partially implemented | `StructuredLLMIntentClassifier`, rule fallback, centralized keyword groups and topic aliases | Rule fallback still needs broader phrase coverage; LLM classifier is optional rather than always-on. |
 | Prompt/summary observability | MVP implemented | prompt segments, `prompt_manifest`, `system_segments`, summary boundary fixes | Runtime service restart may still be needed after backend edits in local sessions. |
+| Runtime fallback safety | MVP implemented | Chat service factory, intent-classifier, and memory-extractor exception tests | Gateway chat failures still surface as chat failures because no assistant reply exists to preserve. |
 
 ## Roadmap Notes
 
@@ -51,6 +52,7 @@ Remaining risk: calibration coverage is still small. The labeled baseline now co
 
 - Topic words, topic aliases, invitation words, audit anchors, and signal groups are centralized rather than scattered.
 - The structured LLM intent path exists and falls back to deterministic rules when unavailable.
+- Chat service initialization and per-turn intent classification fall back to deterministic rules if the configured classifier path raises.
 - Rule intent now preserves actual information-density scores instead of flattening them away.
 - Rule fallback now covers additional completion/deletion phrases and comma-style corrections such as `不是 X，是 Y`.
 - Rule signal coverage now includes slang fatigue/avoidance and mixed-language anxiety expressions such as `摆烂`, `躺平`, and `very anxious`.
@@ -66,7 +68,7 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py` (exits non-zero when any case fails)
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers twenty-four cases with a perfect score.
+Latest audited baseline after this pass: full tests pass, compile checks pass, calibration covers twenty-four cases with a perfect score, and chat runtime fallbacks preserve replies when classifier/extractor setup or extraction fails.
 
 ## Next Iteration Candidates
 

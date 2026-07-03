@@ -1100,6 +1100,91 @@ def test_chat_service_degraded_flow(tmp_path) -> None:
     assert logs[-1]["prompt_manifest"]["work_memory_count"] == len(logs[-1]["api_messages"]) - 5
 
 
+def test_chat_service_falls_back_when_intent_classifier_raises(tmp_path) -> None:
+    class FailingIntentClassifier:
+        name = "failing_intent"
+
+        async def classify_async(self, user_text, context=None):
+            raise RuntimeError("intent boom")
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+    service.intent_classifier = FailingIntentClassifier()
+
+    result = asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    assert result["reply"]
+    assert result["intent"]["classifier"] == "rule_based_intent_exception_fallback"
+    assert "intent boom" in result["intent"]["classifier_error"]
+    assert latest_log["prompt_manifest"]["intent_classifier"] == "rule_based_intent_exception_fallback"
+    assert "intent boom" in latest_log["prompt_manifest"]["intent_classifier_error"]
+
+
+def test_chat_service_keeps_reply_when_memory_extractor_raises(tmp_path) -> None:
+    class FailingMemoryExtractor:
+        name = "failing_extractor"
+
+        async def extract_async(self, user_text, assistant_text="", context=None):
+            raise RuntimeError("extract boom")
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+    service.memory_extractor = FailingMemoryExtractor()
+
+    result = asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    assert result["reply"]
+    assert result["new_memories"] == []
+    assert service.messages()[-1]["role"] == "assistant"
+    assert latest_log["prompt_manifest"]["memory_extractor"] == "failing_extractor"
+    assert "extract boom" in latest_log["prompt_manifest"]["memory_extraction_error"]
+
+
+def test_chat_service_falls_back_when_memory_factories_raise(tmp_path, monkeypatch) -> None:
+    def raise_extractor(settings, gateway):
+        raise RuntimeError("extractor init boom")
+
+    def raise_classifier(settings, gateway):
+        raise RuntimeError("classifier init boom")
+
+    monkeypatch.setattr("app.chat_service.choose_extractor", raise_extractor)
+    monkeypatch.setattr("app.chat_service.choose_intent_classifier", raise_classifier)
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+
+    service = ChatService(JsonStore(settings), DeepSeekGateway(settings))
+    result = asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+
+    latest_log = service.store.snapshot()["generation_logs"][-1]
+    assert result["reply"]
+    assert result["intent"]["classifier"] == "rule_based_intent"
+    assert latest_log["prompt_manifest"]["memory_extractor"] == "rule_based"
+    assert "extractor init boom" in latest_log["prompt_manifest"]["memory_extractor_init_error"]
+    assert "classifier init boom" in latest_log["prompt_manifest"]["intent_classifier_init_error"]
+
+
 def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,

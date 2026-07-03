@@ -21,6 +21,8 @@ from .memory import (
     memory_layers,
     pending_confirmations,
     review_memory_candidates,
+    RuleBasedMemoryExtractor,
+    RuleBasedIntentClassifier,
     should_build_session_summary,
     tidy_memories,
     upsert_memories,
@@ -37,8 +39,18 @@ class ChatService:
     def __init__(self, store: StorageBackend, gateway: DeepSeekGateway) -> None:
         self.store = store
         self.gateway = gateway
-        self.memory_extractor = choose_extractor(gateway.settings, gateway)
-        self.intent_classifier = choose_intent_classifier(gateway.settings, gateway)
+        self.memory_extractor_init_error = None
+        self.intent_classifier_init_error = None
+        try:
+            self.memory_extractor = choose_extractor(gateway.settings, gateway)
+        except Exception as exc:
+            self.memory_extractor_init_error = f"{type(exc).__name__}: {exc}"
+            self.memory_extractor = RuleBasedMemoryExtractor()
+        try:
+            self.intent_classifier = choose_intent_classifier(gateway.settings, gateway)
+        except Exception as exc:
+            self.intent_classifier_init_error = f"{type(exc).__name__}: {exc}"
+            self.intent_classifier = RuleBasedIntentClassifier()
 
     def status(self) -> dict[str, Any]:
         state = self.store.snapshot()
@@ -138,7 +150,14 @@ class ChatService:
             now=time_context["iso"],
             recall_memories=recall_candidates,
         )
-        intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
+        intent_error = None
+        try:
+            intent = await self.intent_classifier.classify_async(memory_user_text, memory_context)
+        except Exception as exc:
+            intent_error = f"{type(exc).__name__}: {exc}"
+            intent = RuleBasedIntentClassifier().classify(memory_user_text, memory_context)
+            intent["classifier"] = "rule_based_intent_exception_fallback"
+            intent["classifier_error"] = intent_error
         memory_context = build_memory_context(
             all_memories,
             memory_user_text,
@@ -174,7 +193,16 @@ class ChatService:
                 "memory_audit": memory_audit,
             },
         }
-        extracted = await self.memory_extractor.extract_async(extraction_text, result.text, {"memory_context": memory_context, "intent": intent, "logical_turn": logical_turn})
+        extraction_error = None
+        try:
+            extracted = await self.memory_extractor.extract_async(
+                extraction_text,
+                result.text,
+                {"memory_context": memory_context, "intent": intent, "logical_turn": logical_turn},
+            )
+        except Exception as exc:
+            extraction_error = f"{type(exc).__name__}: {exc}"
+            extracted = []
         reviewed = review_memory_candidates(extracted)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +254,11 @@ class ChatService:
                 "memory_audit_status": memory_audit["status"],
                 "memory_audit_issues": memory_audit["issues"],
                 "memory_extractor": getattr(self.memory_extractor, "name", "unknown"),
+                "memory_extractor_init_error": self.memory_extractor_init_error,
+                "memory_extraction_error": extraction_error,
                 "intent_classifier": intent.get("classifier", getattr(self.intent_classifier, "name", "unknown")),
+                "intent_classifier_init_error": self.intent_classifier_init_error,
+                "intent_classifier_error": intent_error,
                 "intent": intent,
                 "has_persona": persona is not None,
                 "time_context": time_context,
