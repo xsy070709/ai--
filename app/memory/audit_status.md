@@ -10,7 +10,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 | --- | --- | --- | --- |
 | Short-text topic boundaries | MVP implemented | `summary.py`, `signals.py`, `turns.py`, prompt boundary tests | Topic semantics use local hashed similarity and rules, not model embeddings. |
 | Dynamic working memory | MVP implemented | `work_memory(..., after_message_count=...)`, prompt manifest fields | Limits are configurable heuristics; not learned from usage yet. |
-| JSON to SQLite path | MVP implemented | `StorageBackend`, `JsonStore`, `SqliteStore`, migration script, search tests | State snapshot remains JSON-compatible by design; SQLite is a backend/projection, not the only source model. |
+| JSON to SQLite path | MVP implemented | `StorageBackend`, `JsonStore`, `SqliteStore`, migration script, projection reads, search tests | State snapshot remains JSON-compatible by design for mutation/debug flows; SQLite is still a backend/projection, not the only source model. |
 | FTS and semantic recall | Partially implemented | `memory_fts`, `memory_embeddings`, `semantic.py`, storage search tests | Semantic vectors are deterministic local fallback vectors, not production embeddings or `sqlite-vec`. |
 | Parameter centralization | MVP implemented | `MemoryParams`, profiles, file overrides, centralized topic/follow-up/audit anchors | Defaults are still hand-tuned until broader calibration data exists. |
 | Feedback and calibration loop | Partially implemented | `feedback.py`, `calibration.py`, `scripts/analyze_memory_feedback.py`, `scripts/evaluate_memory_calibration.py` | Feedback reports evidence, but there is no automatic optimizer or large labeled dataset. |
@@ -33,8 +33,9 @@ Remaining risk: this is a practical local semantic layer. It does not yet use ex
 - The storage contract now supports both JSON and SQLite backends through `StorageBackend`.
 - SQLite includes FTS and derived embedding tables, plus migration from existing JSON state.
 - Chat recall can use backend search candidates instead of relying only on full in-memory scans.
+- Read-only memory lists and status profile construction can use the storage projection interface instead of reading memories from the full state snapshot.
 
-Remaining risk: the current semantic search is local and deterministic. The long-term `SQLite + sqlite-vec` target from the roadmap is not fully implemented.
+Remaining risk: the current semantic search is local and deterministic. Write-side chat mutation and debug flows still keep the JSON-compatible snapshot as the source of truth, and the long-term `SQLite + sqlite-vec` target from the roadmap is not fully implemented.
 
 ### 3. Parameters, Feedback, And Calibration
 
@@ -68,5 +69,5 @@ Latest audited baseline after this pass: full tests pass, compile checks pass, a
 1. Expand `data/memory_calibration_cases.json` into a larger labeled set, especially around paraphrased corrections, subtle over-disclosure, and repeated follow-up fatigue.
 2. Decide whether to integrate real embeddings plus `sqlite-vec`, or keep the deterministic local semantic fallback for the MVP.
 3. Broaden the curated synonym/phrase map for topic and intent signals using real chat failures.
-4. Audit remaining full-snapshot profile reads and decide whether any should use narrower storage projections.
+4. Continue narrowing full-snapshot reads where mutation semantics do not require the whole JSON-compatible state.
 5. Add a local service restart verification step after backend prompt changes when permissions allow it.

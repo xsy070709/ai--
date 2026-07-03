@@ -975,6 +975,27 @@ def test_chat_service_degraded_flow_with_sqlite_backend(tmp_path) -> None:
     assert (tmp_path / "store.sqlite3").exists()
 
 
+def test_chat_service_memories_uses_projection_interface(tmp_path) -> None:
+    class ProjectionOnlyStore(JsonStore):
+        def snapshot(self):
+            raise AssertionError("memories should use list_memories, not snapshot")
+
+        def list_memories(self, status: str | None = None):
+            return [make_memory("preference", "用户喜欢安静一点的回复", 0.9, True, "记住")]
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    service = ChatService(ProjectionOnlyStore(settings), DeepSeekGateway(settings))
+
+    assert service.memories()[0]["content"] == "用户喜欢安静一点的回复"
+
+
 def test_chat_service_uses_storage_search_for_recall_candidates(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path,
@@ -1161,6 +1182,33 @@ def test_sqlite_projection_tolerates_duplicate_entity_ids(tmp_path) -> None:
 
     assert message_count == 1
     assert memory_count == 1
+
+
+def test_sqlite_lists_memories_from_projection(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+        storage_backend="sqlite",
+    )
+    store = SqliteStore(settings)
+
+    active_memory = make_memory("preference", "用户喜欢安静一点的回复", 0.9, True, "记住")
+    archived_memory = make_memory("fact", "用户以前提过一个临时信息", 0.5, False, "临时")
+    archived_memory["status"] = "archived"
+
+    def mutate(state):
+        state.setdefault("memories", []).extend([active_memory, archived_memory])
+        return "ok"
+
+    assert store.mutate(mutate) == "ok"
+    assert len(store.list_memories()) == 2
+    active = store.list_memories(status="active")
+    assert len(active) == 1
+    assert active[0]["content"] == "用户喜欢安静一点的回复"
 
 
 def test_sqlite_search_falls_back_to_semantic_match(tmp_path) -> None:

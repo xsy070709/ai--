@@ -57,6 +57,9 @@ class StorageBackend(Protocol):
     def search_memories_semantic(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         ...
 
+    def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
+        ...
+
 
 class JsonStore:
     def __init__(self, settings: Settings) -> None:
@@ -130,6 +133,12 @@ class JsonStore:
             scored.append((cosine_similarity(query_vector, vector), memory))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [memory for score, memory in scored[:limit] if score > 0]
+
+    def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
+        memories = self.snapshot().get("memories", [])
+        if status is None:
+            return memories
+        return [memory for memory in memories if memory.get("status") == status]
 
 
 class SqliteStore:
@@ -353,6 +362,28 @@ class SqliteStore:
             scored.append((cosine_similarity(query_vector, vector), json.loads(row["full_json"])))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [memory for score, memory in scored[:limit] if score > 0]
+
+    def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if status is None:
+                rows = db.execute(
+                    """
+                    SELECT full_json
+                    FROM memories
+                    ORDER BY updated_at DESC, created_at DESC
+                    """
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """
+                    SELECT full_json
+                    FROM memories
+                    WHERE status = ?
+                    ORDER BY updated_at DESC, created_at DESC
+                    """,
+                    (status,),
+                ).fetchall()
+        return [json.loads(row["full_json"]) for row in rows]
 
 
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:

@@ -47,7 +47,7 @@ class ChatService:
             "session_id": state["active_session_id"],
             "persona": persona,
             "layers": memory_layers(state),
-            "profile": build_user_profile(state.get("memories", [])),
+            "profile": build_user_profile(self.store.list_memories(status="active")),
             "memory_confirmations": pending_confirmations(state),
             "llm": {
                 "provider": "deepseek",
@@ -63,14 +63,14 @@ class ChatService:
         return session.get("messages", [])
 
     def memories(self) -> list[dict[str, Any]]:
-        return self.store.snapshot().get("memories", [])
+        return self.store.list_memories()
 
     def memory_confirmations(self) -> list[dict[str, Any]]:
         return pending_confirmations(self.store.snapshot())
 
     def debug_snapshot(self) -> dict[str, Any]:
         state = self.store.snapshot()
-        memories = state.get("memories", [])
+        memories = self.store.list_memories()
         grouped_memories: dict[str, list[dict[str, Any]]] = {}
         for memory in memories:
             grouped_memories.setdefault(memory.get("type", "unknown"), []).append(memory)
