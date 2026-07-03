@@ -286,6 +286,28 @@ def test_calibration_cases_can_check_followup_and_feedback() -> None:
     assert report["results"][0]["checks"]["feedback_signals"] is True
 
 
+def test_calibration_cases_can_check_memory_audit() -> None:
+    report = evaluate_calibration_cases(
+        [
+            {
+                "name": "over explicit boundary",
+                "seed_memories": ["以后不要提家里的事。"],
+                "user_text": "家里的事我不想聊",
+                "assistant_reply": "我知道你不想提家里的事，所以我不说。",
+                "expected_audit_status": "fail",
+                "expected_audit_issues": ["forbidden_memory_surface"],
+                "expected_feedback_signals": ["memory_surface_issue"],
+            }
+        ]
+    )
+
+    result = report["results"][0]
+    assert report["score"] == 1.0
+    assert result["checks"]["memory_audit_status"] is True
+    assert result["checks"]["memory_audit_issues"] is True
+    assert result["checks"]["feedback_signals"] is True
+
+
 def test_semantic_similarity_handles_synonyms_without_token_overlap() -> None:
     assert semantic_similarity("我最近睡不好", "用户最近失眠严重") > 0.2
     assert len(semantic_vector("我最近睡不好")) == DEFAULT_MEMORY_PARAMS.semantic.vector_dimensions

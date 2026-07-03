@@ -46,5 +46,49 @@
     },
     "expected_followup_mode": "gentle_follow_up",
     "expected_feedback_signals": ["user_invited_recall"]
+  },
+  {
+    "name": "followup topic shift is tracked",
+    "user_text": "哈哈哈",
+    "previous_log": {
+      "prompt_manifest": {
+        "followup_mode": "gentle_follow_up",
+        "used_memory_reasons": {
+          "mem_1": "待跟进：材料"
+        }
+      }
+    },
+    "expected_feedback_signals": ["followup_topic_shift"]
+  },
+  {
+    "name": "memory correction is tracked",
+    "user_text": "不是周三，是周五下午面试",
+    "current_manifest": {
+      "corrected_memory_ids": ["mem_1"]
+    },
+    "expected_feedback_signals": ["memory_correction"]
+  },
+  {
+    "name": "over explicit boundary mention is audited",
+    "seed_memories": ["以后不要提家里的事。"],
+    "user_text": "家里的事我不想聊",
+    "assistant_reply": "我知道你不想提家里的事，所以我不说。",
+    "expected_audit_status": "fail",
+    "expected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "missed invited followup is audited",
+    "seed_memories": ["明天面试要准备自我介绍。"],
+    "user_text": "那个后来继续说",
+    "intent": {
+      "has_followup_invitation": true,
+      "is_casual_chat": true,
+      "information_density": 2.1
+    },
+    "assistant_reply": "嗯，我在。你现在感觉怎么样？",
+    "expected_followup_mode": "gentle_follow_up",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["missed_expected_followup"]
   }
 ]

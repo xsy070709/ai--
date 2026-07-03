@@ -42,7 +42,7 @@ Remaining risk: the current semantic search is local and deterministic. The long
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
 - Calibration scripts provide a repeatable gate for recall/follow-up/feedback expectations.
 
-Remaining risk: calibration coverage is still small. The next serious quality step is expanding labeled cases before trusting parameter changes.
+Remaining risk: calibration coverage is still small. The next serious quality step is growing the labeled baseline beyond the current nine cases before trusting parameter changes.
 
 ### 4. Keyword Flexibility And Intent
 
@@ -61,11 +61,11 @@ Use these gates for future memory-roadmap iterations:
 - `python scripts\evaluate_memory_calibration.py`
 - `python scripts\analyze_memory_feedback.py` when feedback or parameter evidence changes
 
-Latest audited baseline before this document: full tests were passing, compile checks passed, and calibration reported a perfect score in the previous committed phases.
+Latest audited baseline after this pass: full tests pass, compile checks pass, and calibration covers nine cases with a perfect score.
 
 ## Next Iteration Candidates
 
-1. Expand `data/memory_calibration_cases.json` beyond the current small baseline, especially around over-disclosure, missed follow-up, and correction.
+1. Expand `data/memory_calibration_cases.json` into a larger labeled set, especially around paraphrased corrections, subtle over-disclosure, and repeated follow-up fatigue.
 2. Decide whether to integrate real embeddings plus `sqlite-vec`, or keep the deterministic local semantic fallback for the MVP.
 3. Add a synonym/phrase expansion layer for topic and intent signals.
 4. Audit remaining full-snapshot profile reads and decide whether any should use narrower storage projections.
