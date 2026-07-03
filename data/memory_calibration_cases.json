@@ -230,5 +230,16 @@
       "is_casual_chat": false,
       "information_density": 2.9
     }
+  },
+  {
+    "name": "pattern label tone memory is audited",
+    "seed_memories": ["我现在因为项目有点焦虑。"],
+    "user_text": "项目又卡住了",
+    "assistant_reply": "你的模式是项目一受阻就容易压力上来，我们先拆一步。",
+    "expected_disclosure_mode": "tone_only",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["over_explicit_tone_memory"],
+    "unexpected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
   }
 ]

@@ -69,7 +69,7 @@ def _content_surface_detected(reply: str, content: str) -> bool:
     if hits >= min(2, len(content_tokens)):
         return True
     anchor_hits = sum(1 for anchor in PARAMS.audit_surface_anchors if anchor in content and anchor in reply)
-    return anchor_hits >= 1 and any(phrase in reply for phrase in ["我记得", "我知道", "你不想", "你容易", "你之前", "上次"])
+    return anchor_hits >= 1 and any(phrase in reply for phrase in ["我记得", "我知道", "你不想", "你容易", "你的模式", "你之前", "上次"])
 
 
 def _labeling_phrase_detected(reply: str, item: dict[str, Any]) -> bool:

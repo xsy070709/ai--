@@ -958,6 +958,22 @@ def test_memory_audit_warns_when_tone_memory_is_labeled() -> None:
     assert audit["issues"][0]["type"] == "over_explicit_tone_memory"
 
 
+def test_memory_audit_warns_when_tone_memory_uses_pattern_label() -> None:
+    memory = make_memory("emotion_pattern", "用户在项目相关情境中容易感到压力", 0.8, False, "用户说项目焦虑")
+    context = {
+        "disclosure_plan": {
+            "mode": "tone_only",
+            "items": [{"memory_id": memory["id"], "type": "emotion_pattern", "action": "hint", "content": memory["content"]}],
+        },
+        "followup_plan": {"mode": "none"},
+    }
+
+    audit = audit_memory_use("你的模式是项目一受阻就容易压力上来，我们先拆一步。", context)
+
+    assert audit["status"] == "warn"
+    assert audit["issues"][0]["type"] == "over_explicit_tone_memory"
+
+
 def test_memory_audit_warns_when_allowed_followup_is_missed() -> None:
     memory = make_memory("shared_experience", "共同经历/约定：我们约定下次继续把项目拆成小任务", 0.8, False, "约定")
     context = {
