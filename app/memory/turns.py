@@ -21,8 +21,9 @@ def build_logical_turn(previous_messages: list[dict[str, Any]], current_user_mes
             break
         if not _is_cluster_fragment(message.get("content", "")):
             break
-        if current_time and _parse_time(message.get("created_at")):
-            delta = abs((current_time - _parse_time(message.get("created_at"))).total_seconds())
+        message_time = _parse_time(message.get("created_at"))
+        if current_time and message_time:
+            delta = abs((current_time - message_time).total_seconds())
             if delta > PARAMS.logical_turn_window_seconds:
                 break
         fragments.append(message)
@@ -60,6 +61,13 @@ def _parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_local_timezone())
+    return parsed.astimezone()
+
+
+def _local_timezone():
+    return datetime.now().astimezone().tzinfo

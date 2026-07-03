@@ -582,6 +582,16 @@ def test_logical_turn_does_not_cluster_stale_fragments() -> None:
     assert turn["message_ids"] == ["u2"]
 
 
+def test_logical_turn_handles_mixed_naive_and_aware_timestamps() -> None:
+    previous = [{"id": "u1", "role": "user", "content": "明天", "created_at": "2026-07-02T10:00:00"}]
+    current = {"id": "u2", "role": "user", "content": "面试", "created_at": "2026-07-02T10:00:20+08:00"}
+
+    turn = build_logical_turn(previous, current)
+
+    assert turn["clustered"] is True
+    assert turn["message_ids"] == ["u1", "u2"]
+
+
 def test_short_high_density_event_extracts_episodic_memory() -> None:
     memories = extract_memory_candidates("我分手了")
 

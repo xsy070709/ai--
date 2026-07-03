@@ -24,7 +24,7 @@ Baseline: `app/memory/idea.md`. This audit separates the current MVP implementat
 
 - Topic-shift summaries no longer depend only on fixed message counts. `summary.py` checks semantic similarity over the unsummarized segment, and topic-shift summaries only cover the previous topic.
 - High-density short messages are handled through `signals.information_density()` and extraction tests, so short messages such as emotional events are not treated as casual filler.
-- `turns.py` clusters recent short user fragments into one logical turn for extraction and intent classification.
+- `turns.py` clusters recent short user fragments into one logical turn for extraction and intent classification, with naive and aware timestamps normalized before window comparisons.
 - Working memory now scales down for casual chat, expands for deep or continued topics, and starts after the latest summary boundary.
 - Relative and numeric deadline inference validates invalid dates and handles naive datetimes before time-state comparisons.
 
