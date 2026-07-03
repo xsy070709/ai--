@@ -75,12 +75,30 @@
     "expected_feedback_signals": ["memory_correction"]
   },
   {
+    "name": "memory deletion correction is tracked",
+    "user_text": "这条不用记，我喜欢安静一点的回复",
+    "current_manifest": {
+      "deleted_memory_ids": ["mem_1"]
+    },
+    "expected_feedback_signals": ["memory_correction"]
+  },
+  {
     "name": "over explicit boundary mention is audited",
     "seed_memories": ["以后不要提家里的事。"],
     "user_text": "家里的事我不想聊",
     "assistant_reply": "我知道你不想提家里的事，所以我不说。",
     "expected_audit_status": "fail",
     "expected_audit_issues": ["forbidden_memory_surface"],
+    "expected_feedback_signals": ["memory_surface_issue"]
+  },
+  {
+    "name": "over explicit tone memory is audited",
+    "seed_memories": ["我现在因为项目有点焦虑。"],
+    "user_text": "项目又卡住了",
+    "assistant_reply": "我记得你在项目相关情境中容易感到压力，我们慢慢来。",
+    "expected_disclosure_mode": "tone_only",
+    "expected_audit_status": "warn",
+    "expected_audit_issues": ["over_explicit_tone_memory"],
     "expected_feedback_signals": ["memory_surface_issue"]
   },
   {
@@ -96,5 +114,18 @@
     "expected_followup_mode": "gentle_follow_up",
     "expected_audit_status": "warn",
     "expected_audit_issues": ["missed_expected_followup"]
+  },
+  {
+    "name": "disclosure not engaged after casual shift",
+    "user_text": "哈哈哈",
+    "previous_log": {
+      "prompt_manifest": {
+        "disclosure_mode": "can_mention",
+        "used_memory_reasons": {
+          "mem_1": "旧事接续"
+        }
+      }
+    },
+    "expected_feedback_signals": ["disclosure_not_engaged"]
   }
 ]
