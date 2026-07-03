@@ -71,6 +71,11 @@ def infer_feedback_signals(
         signals.append(_signal("memory_correction", "用户修正或删除了记忆", ["quality.auto_accept_min_confidence"]))
     if current_manifest.get("queued_memory_ids"):
         signals.append(_signal("confirmation_requested", "本轮产生了需要用户确认的记忆", ["quality.auto_accept_min_confidence"]))
+    if current_manifest.get("confirmation_id") and "accepted" in current_manifest:
+        if current_manifest.get("accepted"):
+            signals.append(_signal("confirmation_accepted", "用户接受了记忆确认项", ["quality.auto_accept_min_confidence"]))
+        else:
+            signals.append(_signal("confirmation_rejected", "用户拒绝了记忆确认项", ["quality.auto_accept_min_confidence"]))
     if current_manifest.get("closed_memory_ids"):
         signals.append(_signal("open_loop_closed", "待跟进事项被关闭", ["recall.open_item_bonus"]))
     if _has_followup_invitation(user_text, intent):

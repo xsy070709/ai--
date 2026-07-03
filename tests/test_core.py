@@ -245,6 +245,16 @@ def test_feedback_signals_use_configured_invitation_words() -> None:
     assert {signal["type"] for signal in signals} == {"user_invited_recall"}
 
 
+def test_feedback_signals_emit_confirmation_results() -> None:
+    accepted = infer_feedback_signals("", current_manifest={"confirmation_id": "conf_1", "accepted": True})
+    rejected = infer_feedback_signals("", current_manifest={"confirmation_id": "conf_2", "accepted": False})
+
+    assert {signal["type"] for signal in accepted} == {"confirmation_accepted"}
+    assert {signal["type"] for signal in rejected} == {"confirmation_rejected"}
+    assert accepted[0]["parameters"] == ["quality.auto_accept_min_confidence"]
+    assert rejected[0]["parameters"] == ["quality.auto_accept_min_confidence"]
+
+
 def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     report = analyze_feedback(
         [
@@ -1724,6 +1734,8 @@ def test_rejected_confirmation_does_not_enter_memory(tmp_path) -> None:
 
     assert rejected and rejected["status"] == "rejected"
     assert not [memory for memory in service.memories() if memory["type"] == "boundary"]
+    logs = service.store.snapshot()["generation_logs"]
+    assert logs[-1]["feedback_signals"][0]["type"] == "confirmation_rejected"
 
 
 def test_chat_service_closes_open_loop_and_generates_reflection(tmp_path) -> None:

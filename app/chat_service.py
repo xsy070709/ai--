@@ -331,6 +331,12 @@ class ChatService:
                     candidate["is_user_confirmed"] = True
                     candidate["quality_decision"] = "accept"
                     upsert_memories(state.setdefault("memories", []), [candidate])
+                prompt_manifest = {
+                    "confirmation_id": confirmation_id,
+                    "candidate_memory_id": candidate.get("id"),
+                    "candidate_type": candidate.get("type"),
+                    "accepted": accept,
+                }
                 state.setdefault("generation_logs", []).append(
                     {
                         "id": new_id("gen"),
@@ -342,19 +348,8 @@ class ChatService:
                         "elapsed_ms": 0,
                         "error": None,
                         "usage": None,
-                        "prompt_manifest": {
-                            "confirmation_id": confirmation_id,
-                            "candidate_memory_id": candidate.get("id"),
-                            "candidate_type": candidate.get("type"),
-                            "accepted": accept,
-                        },
-                        "feedback_signals": [
-                            {
-                                "type": "confirmation_accepted" if accept else "confirmation_rejected",
-                                "reason": "用户处理了记忆确认队列",
-                                "parameters": ["quality.auto_accept_min_confidence"],
-                            }
-                        ],
+                        "prompt_manifest": prompt_manifest,
+                        "feedback_signals": infer_feedback_signals("", current_manifest=prompt_manifest),
                     }
                 )
                 return item

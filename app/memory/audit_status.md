@@ -44,6 +44,7 @@ Remaining risk: the current semantic search is local and deterministic. Write-si
 
 - Tunable memory behavior is centralized in `MemoryParams`, with profiles and config-file overrides.
 - Feedback signals can detect correction, follow-up resolution, topic shift, confirmation acceptance, and memory-audit outcomes.
+- Confirmation accept/reject logs now use the same feedback inference path as chat turns, so quality-threshold evidence is centralized.
 - Calibration scripts provide an automation-friendly gate for positive and negative recall/follow-up/feedback/correction expectations.
 - Feedback analysis now includes parameter metadata with current values, sensitivity, safe ranges, and expected adjustment effects for high-impact knobs.
 
