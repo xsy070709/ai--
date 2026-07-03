@@ -38,6 +38,10 @@ def has_deletion_signal(text: str) -> bool:
     return contains_any(text, PARAMS.signals.deletion_words)
 
 
+def has_followup_invitation(text: str) -> bool:
+    return contains_any(text, PARAMS.disclosure.invite_words)
+
+
 def has_time_signal(text: str) -> bool:
     return contains_any(text, PARAMS.signals.time_words) or bool(_NUMERIC_TIME_RE.search(text))
 

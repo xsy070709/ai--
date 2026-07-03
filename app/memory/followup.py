@@ -4,7 +4,7 @@ from typing import Any
 
 from ..storage import now_iso
 from .params import DEFAULT_MEMORY_PARAMS
-from .signals import has_completion_signal, looks_like_casual_chat
+from .signals import has_completion_signal, has_followup_invitation, looks_like_casual_chat
 from .text import tokens
 from .time_reasoning import annotate_time_state
 
@@ -61,7 +61,7 @@ def build_followup_plan(
     open_recalled = [annotate_time_state(memory, now) if memory.get("type") == "goal" else memory for memory in recalled if memory.get("open")]
     elapsed_recalled = [memory for memory in open_recalled if memory.get("time_state") == "elapsed"]
     casual_chat = _looks_like_casual_chat(user_text, intent)
-    invited = bool(intent and intent.get("has_followup_invitation")) or any(word in user_text for word in ["继续", "后来", "上次", "还记得"])
+    invited = bool(intent and intent.get("has_followup_invitation")) or has_followup_invitation(user_text)
     if elapsed_recalled and not casual_chat:
         return {
             "mode": "elapsed_follow_up",

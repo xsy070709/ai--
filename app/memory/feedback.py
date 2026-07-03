@@ -4,7 +4,14 @@ from collections import Counter
 from typing import Any
 
 from .params import DEFAULT_MEMORY_PARAMS
-from .signals import has_completion_signal, has_task_signal, has_time_signal, is_high_density, looks_like_casual_chat
+from .signals import (
+    has_completion_signal,
+    has_followup_invitation,
+    has_task_signal,
+    has_time_signal,
+    is_high_density,
+    looks_like_casual_chat,
+)
 from .text import topics_from_text
 
 
@@ -201,7 +208,7 @@ def _has_completion_signal(user_text: str, intent: dict[str, Any] | None = None)
 
 
 def _has_followup_invitation(user_text: str, intent: dict[str, Any] | None = None) -> bool:
-    return bool(intent and intent.get("has_followup_invitation")) or "还记得" in user_text or "上次" in user_text or "之前" in user_text
+    return bool(intent and intent.get("has_followup_invitation")) or has_followup_invitation(user_text)
 
 
 def _is_high_density(user_text: str, intent: dict[str, Any] | None = None) -> bool:

@@ -35,7 +35,7 @@ from app.memory.text import unfinished_items
 from app.memory.initiative import build_disclosure_plan
 from app.memory.schema import make_memory
 from app.memory.semantic import semantic_similarity, semantic_vector
-from app.memory.signals import information_density, looks_like_casual_chat
+from app.memory.signals import has_followup_invitation, information_density, looks_like_casual_chat
 from app.memory.summary import should_build_session_summary, work_memory
 from app.persona import initialize_persona
 from app.storage import JsonStore, SqliteStore, create_store, migrate_json_to_sqlite
@@ -222,6 +222,13 @@ def test_feedback_signals_use_intent_invitation_and_density() -> None:
     assert "disclosure_not_engaged" not in signal_types
 
 
+def test_feedback_signals_use_configured_invitation_words() -> None:
+    signals = infer_feedback_signals("刚才说那个后来呢", current_manifest={})
+
+    assert has_followup_invitation("刚才说那个后来呢")
+    assert {signal["type"] for signal in signals} == {"user_invited_recall"}
+
+
 def test_feedback_analysis_suggests_parameter_adjustments() -> None:
     report = analyze_feedback(
         [
@@ -349,6 +356,12 @@ def test_rule_based_intent_reports_actual_information_density() -> None:
 
     assert 0 < intent["information_density"] < DEFAULT_MEMORY_PARAMS.conversation.high_density_threshold
     assert intent["unfinished_items"]
+
+
+def test_rule_based_intent_uses_configured_invitation_words() -> None:
+    intent = RuleBasedIntentClassifier().classify("刚才说那个后来呢")
+
+    assert intent["has_followup_invitation"] is True
 
 
 def test_structured_llm_intent_classifier_maps_json() -> None:
