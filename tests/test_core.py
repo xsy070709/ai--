@@ -32,6 +32,7 @@ from app.memory import (
     upsert_memories,
 )
 from app.memory.text import unfinished_items
+from app.memory.text import emotion_cause, topics_from_text
 from app.memory.initiative import build_disclosure_plan
 from app.memory.schema import make_memory
 from app.memory.semantic import semantic_similarity, semantic_vector
@@ -362,6 +363,14 @@ def test_rule_based_intent_uses_configured_invitation_words() -> None:
     intent = RuleBasedIntentClassifier().classify("刚才说那个后来呢")
 
     assert intent["has_followup_invitation"] is True
+
+
+def test_topics_use_configured_topic_words() -> None:
+    intent = RuleBasedIntentClassifier().classify("实习答辩材料还没准备好")
+
+    assert "实习" in topics_from_text("实习答辩材料还没准备好")
+    assert "答辩" in intent["topics"]
+    assert emotion_cause("实习压力有点大") == "实习"
 
 
 def test_structured_llm_intent_classifier_maps_json() -> None:

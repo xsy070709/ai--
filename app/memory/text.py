@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 
+from .params import DEFAULT_MEMORY_PARAMS
 from .signals import emotion_tags_for, has_task_signal, has_time_signal
+
+PARAMS = DEFAULT_MEMORY_PARAMS
 
 
 def clean_text(text: str) -> str:
@@ -20,7 +23,7 @@ def tokens(text: str) -> list[str]:
 
 def topics_from_text(text: str) -> list[str]:
     topics = []
-    for keyword in ["工作", "学习", "游戏", "朋友", "家庭", "项目", "情绪", "睡眠", "面试", "考试", "回复", "材料", "聊天"]:
+    for keyword in PARAMS.signals.topic_words:
         if keyword in text:
             topics.append(keyword)
     return topics or ["日常聊天"]
@@ -31,7 +34,7 @@ def emotion_tags(text: str) -> list[str]:
 
 
 def emotion_cause(text: str) -> str:
-    for topic in ["项目", "工作", "学习", "考试", "面试", "朋友", "家庭", "睡眠", "材料"]:
+    for topic in PARAMS.signals.topic_words:
         if topic in text:
             return topic
     return "当前情境"
