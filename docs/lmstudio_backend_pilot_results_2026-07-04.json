@@ -1,0 +1,292 @@
+{
+  "created_at": "2026-07-04T15:12:15+0800",
+  "purpose": "lmstudio_backend_workflow_pilot",
+  "config": {
+    "base_url": "http://127.0.0.1:7985/v1",
+    "structured_model": "google/gemma-4-12b-qat",
+    "embedding_model": "text-embedding-nomic-embed-text-v1.5",
+    "timeout_seconds": 30.0,
+    "max_retries": 2
+  },
+  "health": {
+    "ok": true,
+    "elapsed_ms": 51,
+    "base_url": "http://127.0.0.1:7985/v1",
+    "structured_model": "google/gemma-4-12b-qat",
+    "embedding_model": "text-embedding-nomic-embed-text-v1.5",
+    "models": [
+      "google/gemma-4-12b-qat",
+      "text-embedding-nomic-embed-text-v1.5",
+      "google/gemma-4-12b",
+      "deepseek-ocr-2",
+      "qwen/qwen3-vl-4b",
+      "google/gemma-4-e4b"
+    ],
+    "structured_model_available": true,
+    "embedding_model_available": true
+  },
+  "intent_cases": [
+    {
+      "name": "completion_materials",
+      "text": "材料已经交完了，终于松口气。",
+      "elapsed_ms": 7410,
+      "passed": true,
+      "checks": {
+        "has_completion_signal": true,
+        "has_correction_intent": true
+      },
+      "rule": {
+        "classifier": "rule_based_intent",
+        "has_completion_signal": true,
+        "completion_target": "材料",
+        "has_correction_intent": false,
+        "correction_action": null,
+        "has_followup_invitation": false,
+        "primary_emotion": "平稳",
+        "valence": "neutral",
+        "is_casual_chat": false,
+        "topics": [
+          "材料"
+        ],
+        "information_density": 0.0
+      },
+      "lmstudio": {
+        "classifier": "structured_lmstudio_intent",
+        "has_completion_signal": true,
+        "completion_target": "材料",
+        "has_correction_intent": false,
+        "correction_action": null,
+        "has_followup_invitation": false,
+        "primary_emotion": "轻松",
+        "valence": "positive",
+        "is_casual_chat": false,
+        "topics": [
+          "材料提交",
+          "工作",
+          "材料"
+        ],
+        "information_density": 0.8
+      }
+    },
+    {
+      "name": "memory_correction",
+      "text": "不是周三，是周五下午面试。",
+      "elapsed_ms": 7479,
+      "passed": true,
+      "checks": {
+        "has_correction_intent": true,
+        "correction_action": true
+      },
+      "rule": {
+        "classifier": "rule_based_intent",
+        "has_completion_signal": false,
+        "completion_target": null,
+        "has_correction_intent": true,
+        "correction_action": "correct",
+        "has_followup_invitation": false,
+        "primary_emotion": "平稳",
+        "valence": "neutral",
+        "is_casual_chat": false,
+        "topics": [
+          "面试"
+        ],
+        "information_density": 2.9
+      },
+      "lmstudio": {
+        "classifier": "structured_lmstudio_intent",
+        "has_completion_signal": false,
+        "completion_target": null,
+        "has_correction_intent": true,
+        "correction_action": "correct",
+        "has_followup_invitation": false,
+        "primary_emotion": "neutral",
+        "valence": "neutral",
+        "is_casual_chat": false,
+        "topics": [
+          "面试",
+          "时间安排"
+        ],
+        "information_density": 2.9
+      }
+    },
+    {
+      "name": "followup_invitation",
+      "text": "上次说的那个面试准备，我们继续吧。",
+      "elapsed_ms": 6091,
+      "passed": true,
+      "checks": {
+        "has_followup_invitation": true
+      },
+      "rule": {
+        "classifier": "rule_based_intent",
+        "has_completion_signal": false,
+        "completion_target": null,
+        "has_correction_intent": false,
+        "correction_action": null,
+        "has_followup_invitation": true,
+        "primary_emotion": "平稳",
+        "valence": "neutral",
+        "is_casual_chat": false,
+        "topics": [
+          "面试"
+        ],
+        "information_density": 0.75
+      },
+      "lmstudio": {
+        "classifier": "structured_lmstudio_intent",
+        "has_completion_signal": false,
+        "completion_target": null,
+        "has_correction_intent": false,
+        "correction_action": null,
+        "has_followup_invitation": true,
+        "primary_emotion": "neutral",
+        "valence": "neutral",
+        "is_casual_chat": false,
+        "topics": [
+          "面试准备",
+          "面试"
+        ],
+        "information_density": 0.75
+      }
+    }
+  ],
+  "extraction_cases": [
+    {
+      "name": "response_rule",
+      "user": "以后别上来就讲大道理，我更希望你先安慰我。",
+      "elapsed_ms": 4988,
+      "passed": true,
+      "checks": {
+        "response_rule": true
+      },
+      "rule_types": [
+        "preference",
+        "response_rule"
+      ],
+      "lmstudio_types": [
+        "response_rule"
+      ],
+      "lmstudio_memories": [
+        {
+          "type": "response_rule",
+          "content": "用户希望在面对问题时，AI 先提供情感支持和安慰，而不是直接给出建议或讲大道理。",
+          "confidence": 0.92,
+          "open": false,
+          "extractor": "structured_lmstudio"
+        }
+      ]
+    },
+    {
+      "name": "sensitive_boundary",
+      "user": "这是我的雷区，不要提我家里的事。",
+      "elapsed_ms": 4332,
+      "passed": true,
+      "checks": {
+        "boundary": true
+      },
+      "rule_types": [
+        "boundary"
+      ],
+      "lmstudio_types": [
+        "boundary"
+      ],
+      "lmstudio_memories": [
+        {
+          "type": "boundary",
+          "content": "用户要求 AI 避开关于其家庭事务的任何话题。",
+          "confidence": 0.92,
+          "open": false,
+          "extractor": "structured_lmstudio"
+        }
+      ]
+    },
+    {
+      "name": "open_goal",
+      "user": "明天下午我要交材料，现在因为项目有点焦虑。",
+      "elapsed_ms": 9452,
+      "passed": true,
+      "checks": {
+        "goal": true,
+        "emotion_pattern": true
+      },
+      "rule_types": [
+        "emotion_pattern",
+        "episodic",
+        "goal"
+      ],
+      "lmstudio_types": [
+        "emotion_pattern",
+        "goal"
+      ],
+      "lmstudio_memories": [
+        {
+          "type": "emotion_pattern",
+          "content": "用户在面对即将到来的截止日期（如明天下午交材料）时会感到焦虑。",
+          "confidence": 0.85,
+          "open": false,
+          "extractor": "structured_lmstudio"
+        },
+        {
+          "type": "goal",
+          "content": "用户明天下午需要提交材料，目前处于项目焦虑状态。",
+          "confidence": 0.9,
+          "open": true,
+          "extractor": "structured_lmstudio"
+        }
+      ]
+    }
+  ],
+  "embedding_pairs": [
+    {
+      "name": "sleep_synonym",
+      "left": "我最近睡不好",
+      "right": "用户最近失眠严重",
+      "elapsed_ms": 38,
+      "ok": true,
+      "dimension": 768,
+      "lmstudio_similarity": 0.7625,
+      "local_hash_similarity": 0.8734
+    },
+    {
+      "name": "completion_synonym",
+      "left": "材料搞定了",
+      "right": "用户已经完成材料提交",
+      "elapsed_ms": 38,
+      "ok": true,
+      "dimension": 768,
+      "lmstudio_similarity": 0.6496,
+      "local_hash_similarity": 0.8886
+    },
+    {
+      "name": "topic_mismatch",
+      "left": "我最近睡不好",
+      "right": "明天要准备面试简历",
+      "elapsed_ms": 36,
+      "ok": true,
+      "dimension": 768,
+      "lmstudio_similarity": 0.6885,
+      "local_hash_similarity": 0.0732
+    }
+  ],
+  "frontend_guard": {
+    "ok": true,
+    "elapsed_ms": 3,
+    "reply_provider": "local",
+    "reply_model": "fallback",
+    "reply_degraded": true,
+    "lmstudio_request_count": 0,
+    "memory_extractor": "rule_based",
+    "intent_classifier": "rule_based_intent",
+    "evidence": "Default foreground chat used rule memory workflow and did not call LM Studio."
+  },
+  "summary": {
+    "health_ok": true,
+    "intent_passed": 3,
+    "intent_total": 3,
+    "extraction_passed": 3,
+    "extraction_total": 3,
+    "embedding_ok": 3,
+    "embedding_total": 3,
+    "frontend_lmstudio_request_count": 0
+  }
+}

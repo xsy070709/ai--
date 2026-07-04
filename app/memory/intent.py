@@ -63,9 +63,8 @@ class RuleBasedIntentClassifier:
 
 
 class StructuredLLMIntentClassifier:
-    name = "structured_llm_intent"
-
-    def __init__(self, gateway: Any, fallback: IntentClassifier | None = None) -> None:
+    def __init__(self, gateway: Any, fallback: IntentClassifier | None = None, name: str = "structured_llm_intent") -> None:
+        self.name = name
         self.gateway = gateway
         self.fallback = fallback or RuleBasedIntentClassifier()
 
@@ -86,13 +85,18 @@ class StructuredLLMIntentClassifier:
             intent = self.fallback.classify(user_text, context)
             intent["classifier"] = f"{self.name}_parse_fallback"
             return intent
+        rule_intent = self.fallback.classify(user_text, context)
+        intent = _guard_structured_intent(intent, rule_intent)
         intent["classifier"] = self.name
         intent["llm_usage"] = result.usage
         return intent
 
 
 def choose_intent_classifier(settings: Any, gateway: Any) -> IntentClassifier:
-    if getattr(settings, "memory_intent_classifier", "rule") in {"llm", "structured", "deepseek"}:
+    classifier = getattr(settings, "memory_intent_classifier", "rule")
+    if classifier in {"lmstudio", "local"}:
+        return StructuredLLMIntentClassifier(gateway, name="structured_lmstudio_intent")
+    if classifier in {"llm", "structured", "deepseek"}:
         return StructuredLLMIntentClassifier(gateway)
     return RuleBasedIntentClassifier()
 
@@ -161,7 +165,12 @@ def _build_messages(user_text: str, context: dict[str, Any] | None) -> list[dict
   "unfinished_items": ["准备面试材料"],
   "information_density": 0.0
 }
-只判断用户当前消息，不要编造长期记忆。
+判断规则：
+- 只判断用户当前消息，不要编造长期记忆。
+- has_completion_signal 只在用户明确表示某件事已经完成、交完、搞定、解决、收工时为 true；“继续准备”“我们继续”不是完成。
+- has_followup_invitation 在用户说“上次”“刚才说的”“继续”“还记得”“那个后来”等想接旧话题时为 true。
+- has_correction_intent 只在用户明确说旧信息不对、要删除、别记、改成、不是 A 是 B 时为 true。
+- correction_action 只能是 delete、correct 或 null；没有纠错时所有 correction_* 字段都为 null。
 """
     return [
         {"role": "system", "content": "你是记忆意图分类器，只输出 JSON，不输出解释。"},
@@ -170,15 +179,16 @@ def _build_messages(user_text: str, context: dict[str, Any] | None) -> list[dict
 
 
 def _normalize_intent(payload: dict[str, Any]) -> dict[str, Any]:
+    correction_action = _normalized_correction_action(payload.get("correction_action"))
     return {
         "has_completion_signal": bool(payload.get("has_completion_signal", False)),
-        "completion_target": payload.get("completion_target"),
-        "has_correction_intent": bool(payload.get("has_correction_intent", False)),
-        "correction_action": _normalized_correction_action(payload.get("correction_action")),
-        "correction_query": payload.get("correction_query"),
-        "correction_new_value": payload.get("correction_new_value"),
+        "completion_target": _optional_string(payload.get("completion_target")),
+        "has_correction_intent": bool(payload.get("has_correction_intent", False)) and correction_action is not None,
+        "correction_action": correction_action,
+        "correction_query": _optional_string(payload.get("correction_query")),
+        "correction_new_value": _optional_string(payload.get("correction_new_value")),
         "primary_emotion": str(payload.get("primary_emotion", "平稳")),
-        "secondary_emotion": payload.get("secondary_emotion"),
+        "secondary_emotion": _optional_string(payload.get("secondary_emotion")),
         "valence": str(payload.get("valence", "neutral")),
         "is_casual_chat": bool(payload.get("is_casual_chat", False)),
         "has_followup_invitation": bool(payload.get("has_followup_invitation", False)),
@@ -188,8 +198,57 @@ def _normalize_intent(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _guard_structured_intent(intent: dict[str, Any], rule_intent: dict[str, Any]) -> dict[str, Any]:
+    guarded = dict(intent)
+
+    if not rule_intent.get("has_completion_signal"):
+        guarded["has_completion_signal"] = False
+        guarded["completion_target"] = None
+    else:
+        guarded["has_completion_signal"] = True
+        guarded["completion_target"] = rule_intent.get("completion_target") or guarded.get("completion_target")
+
+    guarded["has_followup_invitation"] = bool(
+        guarded.get("has_followup_invitation") or rule_intent.get("has_followup_invitation")
+    )
+
+    if rule_intent.get("has_correction_intent"):
+        guarded["has_correction_intent"] = True
+        guarded["correction_action"] = guarded.get("correction_action") or rule_intent.get("correction_action")
+        guarded["correction_query"] = guarded.get("correction_query") or rule_intent.get("correction_query")
+        guarded["correction_new_value"] = guarded.get("correction_new_value") or rule_intent.get("correction_new_value")
+    elif guarded.get("correction_action") in {"delete", "correct"}:
+        guarded["has_correction_intent"] = True
+    else:
+        guarded["has_correction_intent"] = False
+        guarded["correction_action"] = None
+        guarded["correction_query"] = None
+        guarded["correction_new_value"] = None
+
+    rule_topics = [topic for topic in rule_intent.get("topics", []) if topic not in guarded.get("topics", [])]
+    guarded["topics"] = [*guarded.get("topics", []), *rule_topics]
+    guarded["information_density"] = max(
+        float(guarded.get("information_density") or 0.0),
+        float(rule_intent.get("information_density") or 0.0),
+    )
+    return guarded
+
+
 def _normalized_correction_action(action: Any) -> str | None:
     normalized = str(action or "").strip().lower()
     if normalized in {"delete", "correct"}:
         return normalized
     return None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lower() in {"none", "null", "nil", "n/a", "na"}:
+        return None
+    if text in {"无", "没有", "无此项", "未指明"}:
+        return None
+    return text

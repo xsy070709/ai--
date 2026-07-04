@@ -22,6 +22,8 @@ from app.memory import (
     build_logical_turn,
     build_session_summary,
     close_resolved_open_loops,
+    choose_extractor,
+    choose_intent_classifier,
     extract_memory_candidates,
     evaluate_calibration_cases,
     generate_reflections,
@@ -148,6 +150,91 @@ def test_deepseek_structured_client_cache_short_circuits_network(tmp_path) -> No
 
     assert result.text == "{}"
     assert result.usage["client_cache_hit"] is True
+
+
+def test_lmstudio_structured_uses_openai_compatible_provider(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+        structured_provider="lmstudio",
+        local_lm_base_url="http://127.0.0.1:7985/v1",
+        local_structured_model="google/gemma-4-12b-qat",
+    )
+    calls = []
+
+    async def fake_chat_completion(self, **kwargs):
+        calls.append(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"has_completion_signal":true,"completion_target":"材料","has_correction_intent":false,"correction_action":null,"correction_query":null,"correction_new_value":null,"primary_emotion":"松弛","secondary_emotion":null,"valence":"positive","is_casual_chat":false,"has_followup_invitation":false,"topics":["材料"],"unfinished_items":[],"information_density":1.7}'
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 12, "total_tokens": 22},
+        }
+
+    monkeypatch.setattr("app.llm_gateway.OpenAICompatibleLocalClient.chat_completion", fake_chat_completion)
+    gateway = DeepSeekGateway(settings)
+
+    result = asyncio.run(gateway.structured([{"role": "user", "content": "材料交完了"}], purpose="memory_intent"))
+    cached = asyncio.run(gateway.structured([{"role": "user", "content": "材料交完了"}], purpose="memory_intent"))
+
+    assert result.provider == "lmstudio"
+    assert result.model == "google/gemma-4-12b-qat"
+    assert result.degraded is False
+    assert cached.usage["client_cache_hit"] is True
+    assert len(calls) == 1
+    assert calls[0]["model"] == "google/gemma-4-12b-qat"
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[0]["response_format"]["json_schema"]["name"] == "memory_intent"
+
+
+def test_lmstudio_structured_degrades_on_invalid_json(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+        structured_provider="lmstudio",
+        local_structured_model="google/gemma-4-12b-qat",
+    )
+
+    async def fake_chat_completion(self, **kwargs):
+        return {"choices": [{"message": {"content": "not json"}}], "usage": {"total_tokens": 3}}
+
+    monkeypatch.setattr("app.llm_gateway.OpenAICompatibleLocalClient.chat_completion", fake_chat_completion)
+
+    result = asyncio.run(DeepSeekGateway(settings).structured([{"role": "user", "content": "x"}], purpose="memory_extract"))
+
+    assert result.provider == "lmstudio"
+    assert result.degraded is True
+    assert result.text == "{}"
+    assert result.error
+
+
+def test_lmstudio_memory_settings_select_structured_adapters(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+        memory_extractor="lmstudio",
+        memory_intent_classifier="lmstudio",
+    )
+    gateway = DeepSeekGateway(settings)
+
+    assert choose_extractor(settings, gateway).name == "structured_lmstudio"
+    assert choose_intent_classifier(settings, gateway).name == "structured_lmstudio_intent"
 
 
 def test_memory_params_centralize_tunable_defaults() -> None:
@@ -567,7 +654,7 @@ def test_topics_use_configured_alias_words() -> None:
 
 def test_structured_llm_intent_classifier_maps_json() -> None:
     gateway = FakeIntentGateway()
-    intent = asyncio.run(StructuredLLMIntentClassifier(gateway).classify_async("明天面试"))
+    intent = asyncio.run(StructuredLLMIntentClassifier(gateway).classify_async("面试搞定了"))
 
     assert intent["classifier"] == "structured_llm_intent"
     assert intent["completion_target"] == "面试"
@@ -583,6 +670,89 @@ def test_structured_llm_intent_classifier_falls_back_when_degraded() -> None:
 
     assert intent["classifier"] == "structured_llm_intent_fallback"
     assert intent["primary_emotion"] == "压力"
+
+
+def test_structured_llm_intent_normalizes_none_like_strings() -> None:
+    class NoneStringIntentGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"has_completion_signal":true,"completion_target":"none","has_correction_intent":true,"correction_action":"none","correction_query":"none","correction_new_value":"无","primary_emotion":"neutral","secondary_emotion":"null","valence":"positive","is_casual_chat":true,"has_followup_invitation":false,"topics":["材料"],"unfinished_items":[],"information_density":1.7}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    intent = asyncio.run(StructuredLLMIntentClassifier(NoneStringIntentGateway()).classify_async("材料交完了"))
+
+    assert intent["has_completion_signal"] is True
+    assert intent["completion_target"] == "材料"
+    assert intent["has_correction_intent"] is False
+    assert intent["correction_action"] is None
+    assert intent["correction_query"] is None
+    assert intent["correction_new_value"] is None
+    assert intent["secondary_emotion"] is None
+
+
+def test_structured_llm_intent_guard_rejects_completion_false_positive() -> None:
+    class OvereagerIntentGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"has_completion_signal":true,"completion_target":"面试","has_correction_intent":false,"correction_action":null,"correction_query":null,"correction_new_value":null,"primary_emotion":"平稳","secondary_emotion":null,"valence":"neutral","is_casual_chat":false,"has_followup_invitation":false,"topics":["面试"],"unfinished_items":[],"information_density":1.0}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    intent = asyncio.run(StructuredLLMIntentClassifier(OvereagerIntentGateway()).classify_async("上次说的那个面试准备，我们继续吧"))
+
+    assert intent["has_completion_signal"] is False
+    assert intent["completion_target"] is None
+    assert intent["has_followup_invitation"] is True
+
+
+def test_structured_llm_intent_guard_keeps_rule_correction_when_llm_misses() -> None:
+    class MissingCorrectionGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"has_completion_signal":true,"completion_target":"面试","has_correction_intent":false,"correction_action":null,"correction_query":null,"correction_new_value":null,"primary_emotion":"平稳","secondary_emotion":null,"valence":"neutral","is_casual_chat":false,"has_followup_invitation":false,"topics":["面试"],"unfinished_items":[],"information_density":1.0}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    intent = asyncio.run(StructuredLLMIntentClassifier(MissingCorrectionGateway()).classify_async("不是周三，是周五下午面试"))
+
+    assert intent["has_completion_signal"] is False
+    assert intent["has_correction_intent"] is True
+    assert intent["correction_action"] == "correct"
+    assert intent["correction_query"] == "周三"
+    assert intent["correction_new_value"] == "周五下午面试"
+
+
+def test_structured_llm_extractor_normalizes_overconfident_memory() -> None:
+    class OverconfidentMemoryGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"memories":[{"type":"response_rule","content":"用户希望先被安慰再分析","confidence":1.0,"confirmed":false,"open":true,"stability":"permanent","sensitivity_level":"unknown"},{"type":"goal","content":"用户明天下午要交材料","confidence":0.97,"confirmed":false,"open":true,"stability":"high","sensitivity_level":"low"},{"type":"unsupported","content":"这条不该入库","confidence":0.99,"confirmed":false,"open":true,"stability":"high","sensitivity_level":"low"}]}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    memories = asyncio.run(StructuredLLMMemoryExtractor(OverconfidentMemoryGateway()).extract_async("明天下午我要交材料，也希望你先安慰我"))
+    by_type = {memory["type"]: memory for memory in memories}
+
+    assert set(by_type) == {"response_rule", "goal"}
+    assert by_type["response_rule"]["confidence"] == 0.92
+    assert by_type["response_rule"]["open"] is False
+    assert by_type["response_rule"]["stability"] == "medium"
+    assert by_type["response_rule"]["sensitivity_level"] == "low"
+    assert by_type["goal"]["confidence"] == 0.92
+    assert by_type["goal"]["open"] is True
 
 
 def test_quality_review_queues_sensitive_boundary() -> None:

@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .local_model import OpenAICompatibleLocalClient, structured_response_format
 
 
 @dataclass
@@ -27,6 +28,7 @@ class DeepSeekGateway:
         self.settings = settings
         self._structured_cache: dict[str, LLMResult] = {}
         self._request_log: list[dict[str, Any]] = []
+        self._local_client: OpenAICompatibleLocalClient | None = None
 
     async def chat(self, messages: list[dict[str, str]], purpose: str = "chat") -> LLMResult:
         started = time.perf_counter()
@@ -63,6 +65,9 @@ class DeepSeekGateway:
         return result
 
     async def structured(self, messages: list[dict[str, str]], purpose: str = "structured") -> LLMResult:
+        if self._uses_local_structured(purpose):
+            return await self._local_structured(messages, purpose=purpose)
+
         started = time.perf_counter()
         if not self.settings.has_deepseek_key:
             return LLMResult(
@@ -122,6 +127,74 @@ class DeepSeekGateway:
         self._record_request(purpose, payload, result)
         return result
 
+    async def _local_structured(self, messages: list[dict[str, str]], purpose: str) -> LLMResult:
+        started = time.perf_counter()
+        payload = self._local_payload(messages, purpose=purpose)
+        cache_key = self._structured_cache_key(payload)
+        if cache_key in self._structured_cache:
+            cached = deepcopy(self._structured_cache[cache_key])
+            cached.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            cached.usage = dict(cached.usage or {})
+            cached.usage["client_cache_hit"] = True
+            self._record_request(purpose, payload, cached, client_cache_hit=True)
+            return cached
+
+        last_error: str | None = None
+        for _ in range(max(1, self.settings.max_retries + 1)):
+            try:
+                data = await self._local().chat_completion(
+                    messages=payload["messages"],
+                    model=payload["model"],
+                    response_format=payload.get("response_format"),
+                    max_tokens=int(payload["max_tokens"]),
+                    temperature=float(payload["temperature"]),
+                    timeout_seconds=self.settings.timeout_seconds,
+                )
+                text = data["choices"][0]["message"]["content"].strip()
+                json.loads(text)
+                result = LLMResult(
+                    text=text,
+                    provider="lmstudio",
+                    model=payload["model"],
+                    degraded=False,
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                    usage=self._usage(data),
+                )
+                self._structured_cache[cache_key] = deepcopy(result)
+                self._record_request(purpose, payload, result)
+                return result
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+
+        result = LLMResult(
+            text="{}",
+            provider="lmstudio",
+            model=payload["model"],
+            degraded=True,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            error=last_error or "local structured call failed",
+            usage={"estimated_prompt_chars": sum(len(m.get("content", "")) for m in messages)},
+        )
+        self._record_request(purpose, payload, result)
+        return result
+
+    def _local(self) -> OpenAICompatibleLocalClient:
+        if self._local_client is None:
+            self._local_client = OpenAICompatibleLocalClient(
+                self.settings.local_lm_base_url,
+                api_key=self.settings.local_lm_api_key,
+            )
+        return self._local_client
+
+    def _uses_local_structured(self, purpose: str) -> bool:
+        if self.settings.structured_provider in {"lmstudio", "local"}:
+            return True
+        if purpose == "memory_extract" and self.settings.memory_extractor in {"lmstudio", "local"}:
+            return True
+        if purpose == "memory_intent" and self.settings.memory_intent_classifier in {"lmstudio", "local"}:
+            return True
+        return False
+
     def _payload(self, messages: list[dict[str, str]], *, purpose: str, structured: bool) -> dict[str, Any]:
         thinking = self.settings.deepseek_thinking
         payload: dict[str, Any] = {
@@ -139,6 +212,17 @@ class DeepSeekGateway:
         if structured:
             payload["response_format"] = {"type": "json_object"}
         return payload
+
+    def _local_payload(self, messages: list[dict[str, str]], *, purpose: str) -> dict[str, Any]:
+        return {
+            "provider": "lmstudio",
+            "model": self.settings.local_structured_model,
+            "messages": self._format_messages(messages, structured=True),
+            "stream": False,
+            "max_tokens": self.settings.deepseek_structured_max_tokens,
+            "temperature": 0.1,
+            "response_format": structured_response_format(purpose),
+        }
 
     def _format_messages(self, messages: list[dict[str, str]], *, structured: bool) -> list[dict[str, str]]:
         if not structured:
@@ -177,6 +261,7 @@ class DeepSeekGateway:
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "purpose": purpose,
                 "model": payload.get("model"),
+                "local_base_url": self.settings.local_lm_base_url if result.provider == "lmstudio" else None,
                 "thinking": payload.get("thinking"),
                 "response_format": payload.get("response_format"),
                 "max_tokens": payload.get("max_tokens"),

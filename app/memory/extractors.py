@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from ..time_context import current_time_context
 from .extraction import extract_memory_candidates as rule_based_extract
-from .schema import make_memory
+from .schema import HUMAN_MEMORY_TYPES, make_memory
 from .text import valence_from_text
 
 
@@ -42,9 +42,8 @@ class StructuredLLMMemoryExtractor:
     implementation can later return the same memory dictionaries.
     """
 
-    name = "structured_llm"
-
-    def __init__(self, gateway: Any, fallback: MemoryExtractor | None = None) -> None:
+    def __init__(self, gateway: Any, fallback: MemoryExtractor | None = None, name: str = "structured_llm") -> None:
+        self.name = name
         self.gateway = gateway
         self.fallback = fallback or RuleBasedMemoryExtractor()
 
@@ -76,7 +75,10 @@ class StructuredLLMMemoryExtractor:
 
 
 def choose_extractor(settings: Any, gateway: Any) -> MemoryExtractor:
-    if getattr(settings, "memory_extractor", "rule") in {"llm", "structured", "deepseek"}:
+    extractor = getattr(settings, "memory_extractor", "rule")
+    if extractor in {"lmstudio", "local"}:
+        return StructuredLLMMemoryExtractor(gateway, name="structured_lmstudio")
+    if extractor in {"llm", "structured", "deepseek"}:
         return StructuredLLMMemoryExtractor(gateway)
     return RuleBasedMemoryExtractor()
 
@@ -106,7 +108,12 @@ def _build_messages(user_text: str, assistant_text: str, context: dict[str, Any]
     }
   ]
 }
-只抽取对长期相处有用的记忆；不要把普通寒暄写成记忆；不要编造。
+抽取规则：
+- 只抽取对长期相处有用的记忆；不要把普通寒暄写成记忆；不要编造。
+- type 只能使用 schema 中列出的值。
+- open 只用于还没完成、后续需要自然跟进的 goal；response_rule、boundary、emotion_pattern 默认 open=false。
+- boundary、dislike、fact、episodic 需要用户确认，confirmed 通常为 false。
+- confidence 不要虚高；不确定的候选应低于 0.7。
 """
     return [
         {"role": "system", "content": "你是记忆抽取器，只输出 JSON，不输出解释。"},
@@ -117,23 +124,54 @@ def _build_messages(user_text: str, assistant_text: str, context: dict[str, Any]
 def _payload_to_memories(payload: dict[str, Any], evidence_text: str) -> list[dict[str, Any]]:
     memories = []
     for item in payload.get("memories", []):
-        memory_type = str(item.get("type", "fact"))
+        memory_type = _normalized_memory_type(item.get("type"))
         content = str(item.get("content", "")).strip()
-        if not content:
+        if memory_type is None or not content:
             continue
-        confidence = float(item.get("confidence", 0.6))
-        confidence = max(0.0, min(confidence, 1.0))
+        confirmed = bool(item.get("confirmed", False))
+        confidence = _normalized_confidence(item.get("confidence", 0.6), confirmed=confirmed)
         memories.append(
             make_memory(
                 memory_type,
                 content,
                 confidence,
-                bool(item.get("confirmed", False)),
+                confirmed,
                 evidence_text,
-                open_item=bool(item.get("open", False)),
+                open_item=_normalized_open_item(memory_type, item.get("open"), content),
                 valence=valence_from_text(content),
-                stability=str(item.get("stability", "medium")),
-                sensitivity_level=str(item.get("sensitivity_level", "low")),
+                stability=_normalized_choice(item.get("stability"), {"low", "medium", "high"}, "medium"),
+                sensitivity_level=_normalized_choice(item.get("sensitivity_level"), {"low", "medium", "high"}, "low"),
             )
         )
     return memories
+
+
+def _normalized_memory_type(value: Any) -> str | None:
+    memory_type = str(value or "fact").strip()
+    if memory_type in HUMAN_MEMORY_TYPES:
+        return memory_type
+    return None
+
+
+def _normalized_confidence(value: Any, *, confirmed: bool) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = 0.6
+    confidence = max(0.0, min(confidence, 1.0))
+    if not confirmed:
+        confidence = min(confidence, 0.92)
+    return confidence
+
+
+def _normalized_open_item(memory_type: str, value: Any, content: str) -> bool:
+    if memory_type == "goal":
+        return bool(value)
+    if memory_type == "shared_experience" and any(marker in content for marker in ("下次", "继续", "约定")):
+        return bool(value)
+    return False
+
+
+def _normalized_choice(value: Any, allowed: set[str], default: str) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in allowed else default

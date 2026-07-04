@@ -32,6 +32,11 @@ class Settings:
     deepseek_thinking: str = "disabled"
     deepseek_chat_max_tokens: int = 700
     deepseek_structured_max_tokens: int = 900
+    structured_provider: str = "deepseek"
+    local_lm_base_url: str = "http://127.0.0.1:7985/v1"
+    local_lm_api_key: str = "lm-studio"
+    local_structured_model: str = "google/gemma-4-12b-qat"
+    local_embedding_model: str = "text-embedding-nomic-embed-text-v1.5"
 
     @property
     def has_deepseek_key(self) -> bool:
@@ -53,6 +58,11 @@ def load_settings() -> Settings:
         deepseek_thinking=os.getenv("DEEPSEEK_THINKING", "disabled").lower(),
         deepseek_chat_max_tokens=int(os.getenv("DEEPSEEK_CHAT_MAX_TOKENS", "700")),
         deepseek_structured_max_tokens=int(os.getenv("DEEPSEEK_STRUCTURED_MAX_TOKENS", "900")),
+        structured_provider=os.getenv("STRUCTURED_PROVIDER", "deepseek").lower(),
+        local_lm_base_url=os.getenv("LOCAL_LM_BASE_URL", "http://127.0.0.1:7985/v1").rstrip("/"),
+        local_lm_api_key=os.getenv("LOCAL_LM_API_KEY", "lm-studio"),
+        local_structured_model=os.getenv("LOCAL_STRUCTURED_MODEL", "google/gemma-4-12b-qat"),
+        local_embedding_model=os.getenv("LOCAL_EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5"),
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
         force_local_llm=os.getenv("LLM_FORCE_LOCAL", "").lower() in {"1", "true", "yes"},

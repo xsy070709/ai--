@@ -59,6 +59,24 @@ MEMORY_EXTRACTOR=llm
 MEMORY_INTENT_CLASSIFIER=llm
 ```
 
+本地 LM Studio 实验接入：
+
+```text
+STRUCTURED_PROVIDER=lmstudio
+LOCAL_LM_BASE_URL=http://127.0.0.1:7985/v1
+LOCAL_STRUCTURED_MODEL=google/gemma-4-12b-qat
+MEMORY_EXTRACTOR=lmstudio
+MEMORY_INTENT_CLASSIFIER=lmstudio
+```
+
+这只会把结构化记忆抽取和意图分类切到 LM Studio 的 OpenAI-compatible API；主聊天回复仍按 DeepSeek 配置运行。LM Studio 不可用、返回 degraded 或 JSON 解析失败时，记忆模块会回退到规则抽取/规则意图。注意：直接启用 `MEMORY_EXTRACTOR=lmstudio` 或 `MEMORY_INTENT_CLASSIFIER=lmstudio` 会把本地模型调用串入当前聊天请求，适合实验，不适合作为“不影响前台响应”的默认配置。
+
+不影响前台聊天的后台试点评估：
+
+```powershell
+python scripts\run_lmstudio_backend_pilot.py --output docs\lmstudio_backend_pilot_results_2026-07-04.json
+```
+
 参数档和覆盖文件：
 
 ```text
