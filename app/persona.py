@@ -14,7 +14,10 @@ def _list_from_keywords(text: str, keywords: list[str], fallback: list[str]) -> 
 
 def initialize_persona(background_text: str) -> dict[str, Any]:
     text = background_text.strip()
-    name_match = re.search(r"(?:名字|姓名|称呼)[:： ]*([^\n，。,.]{1,16})", text)
+    name_match = re.search(
+        r"(?:名字|姓名|称呼)(?:叫做|设定为|叫|是|为)?[:： ]*([^\n，。,.；;]{1,16})",
+        text,
+    ) or re.search(r"(?:你叫|你是|叫做|称为)[:： ]*([^\n，。,.；;]{1,16})", text)
     relation_match = re.search(r"(?:关系|定位)[:： ]*([^\n。]{1,40})", text)
     name = name_match.group(1).strip() if name_match else "未命名好友"
     relationship = relation_match.group(1).strip() if relation_match else "长期陪伴型虚拟好友"
@@ -296,3 +299,280 @@ def _unique(values: list[str]) -> list[str]:
         result.append(item)
         seen.add(item)
     return result
+
+
+# ---------------------------------------------------------------------------
+# improved prompts for multi-person / narrative inference
+# ---------------------------------------------------------------------------
+
+
+def persona_learning_prompt_v2(
+    text: str,
+    source_type: str = "mixed",
+    persona_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Extended learning prompt that handles multi-person narratives.
+
+    When *persona_name* is provided the LLM uses it to pick the correct
+    subject out of a story that mentions several characters.
+    """
+
+    name_hint = (
+        f"需要分析的主体名字是「{persona_name}」。请在文本中寻找关于这个人物的信息。"
+        if persona_name
+        else "文本中可能没有直接给出名字，请从代词（她/他/你）或上下文推断谁是主体。"
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是人格设定分析器。请从导入的背景故事或聊天记录中提取可扮演的人格设定。\n\n"
+                f"{name_hint}\n\n"
+                "分析规则：\n"
+                "1. 如果文本中有多个人物，根据给定的名字确定主体。如果文本中没有明确名字，"
+                "从代词（她/他/你）或上下文中推断谁是核心人物。\n"
+                "2. 区分不同类型的描述：\n"
+                "   - 直接描述：「她很温柔」→ 特质：温柔\n"
+                "   - 经历推断：「她经历过战争，失去了家人」→ 可能特质：坚韧、成熟、有故事\n"
+                "   - 行为推断：「她总是先为别人着想」→ 可能特质：善良、体贴\n"
+                "   - 对话推断：从聊天记录中的语气、用词推断口癖和表达风格\n"
+                "3. 对于从经历/行为推断出的特质，如果不太确定，confidence 可以设为中等。\n"
+                "4. 不要复述隐私原文，不要编造材料外的事实。\n"
+                "5. 如果某个字段信息不足，留空数组或 null，不要把猜测当事实。\n\n"
+                "输出 JSON object，字段包括：\n"
+                "- name: 名字（字符串或 null）\n"
+                "- relationship_to_user: 与用户的关系（字符串或 null）\n"
+                "- summary: 人格摘要（1-3句话）\n"
+                "- traits: 性格特征数组（最多 8 项）\n"
+                "- speaking_style: 说话方式数组（最多 8 项）\n"
+                "- catchphrases: 口癖数组（最多 8 项）\n"
+                "- habits: 习惯数组（最多 8 项）\n"
+                "- emotional_style: 情绪风格数组（最多 6 项）\n"
+                "- conversation_habits: 聊天习惯数组（最多 8 项）\n"
+                "- taboo_phrases: 禁忌用语数组（最多 8 项）\n"
+                "- needs_clarification: 不确定或缺失的重要字段名数组\n"
+                "- clarifying_questions: 想进一步问用户的问题（不超过 3 个）\n"
+                "- confidence: 整体信心评分（0-1 的小数）\n"
+            ),
+        },
+        {"role": "user", "content": f"source_type={source_type}\n{text[:12000]}"},
+    ]
+
+
+def persona_refine_prompt(
+    current_profile: dict[str, Any],
+    conversation_history: list[dict[str, str]],
+    user_message: str,
+) -> list[dict[str, str]]:
+    """Build messages for a refinement turn during the import learning dialogue."""
+
+    system_content = (
+        "你是一个人格设定分析器，正在与用户进行对话以完善人格设定。\n\n"
+        f"当前人格设定：\n{json.dumps(current_profile, ensure_ascii=False, indent=2)}\n\n"
+        "用户会提供反馈、补充信息或纠正。请根据反馈更新设定。\n"
+        "输出 JSON object，字段包括：\n"
+        "- reply: 你的自然语言回复（1-3 句话，可以确认改动、追问细节或给出建议）\n"
+        "- profile_diff: 对当前设定的增量更新（只包含需要修改或新增的字段，未变字段不放入）\n"
+        "- clarifying_questions: 还想进一步了解的问题（不超过 2 个，不需要时为空数组）\n"
+        "- is_complete: 觉得设定是否已经足够完善（布尔值）\n"
+    )
+    recent = conversation_history[-8:] if len(conversation_history) > 8 else conversation_history
+    return [
+        {"role": "system", "content": system_content},
+        *recent,
+        {"role": "user", "content": user_message},
+    ]
+
+
+def merge_profile_diff(base_profile: dict[str, Any], profile_diff: dict[str, Any]) -> dict[str, Any]:
+    """Apply incremental profile updates, replacing list fields when provided."""
+
+    merged = dict(base_profile)
+    for key in ("name", "relationship_to_user", "summary"):
+        value = profile_diff.get(key)
+        if isinstance(value, str) and value.strip():
+            merged[key] = value.strip()
+    for key in (
+        "traits",
+        "speaking_style",
+        "catchphrases",
+        "habits",
+        "emotional_style",
+        "conversation_habits",
+        "taboo_phrases",
+    ):
+        value = profile_diff.get(key)
+        if isinstance(value, list) and value:
+            merged[key] = _unique([str(item).strip() for item in value if str(item).strip()])[:8]
+    merged["learner"] = profile_diff.get("learner") or merged.get("learner", "structured_llm")
+    return merged
+
+
+def parse_refine_json(text: str) -> dict[str, Any]:
+    """Parse the JSON output from a refinement turn.  Returns a dict with safe defaults."""
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {
+            "reply": "明白了，我会根据你的反馈调整设定。",
+            "profile_diff": {},
+            "clarifying_questions": [],
+            "is_complete": False,
+        }
+    if not isinstance(data, dict):
+        return {"reply": str(data), "profile_diff": {}, "clarifying_questions": [], "is_complete": False}
+    return {
+        "reply": str(data.get("reply") or "收到，设定已更新。"),
+        "profile_diff": data.get("profile_diff") if isinstance(data.get("profile_diff"), dict) else {},
+        "clarifying_questions": (
+            data.get("clarifying_questions")
+            if isinstance(data.get("clarifying_questions"), list)
+            else []
+        )[:2],
+        "is_complete": bool(data.get("is_complete", False)),
+    }
+
+
+def build_persona_learning_memories(
+    persona: dict[str, Any],
+    profile: dict[str, Any],
+    source_text: str,
+    entity_id: str,
+) -> list[dict[str, Any]]:
+    """Build memory records from a learned persona profile.
+
+    Extracted from ChatService so the import-session flow can reuse it
+    without depending on the service's private methods.
+    """
+
+    from .memory.schema import make_memory
+
+    name = persona.get("identity", {}).get("name") or "该人格"
+    evidence = source_text[:240]
+    memories: list[dict[str, Any]] = []
+
+    if profile.get("traits"):
+        memories.append(
+            make_memory(
+                "stable_impression",
+                f"{name}的稳定性格：{'、'.join(profile['traits'][:6])}",
+                0.82,
+                True,
+                evidence,
+            )
+        )
+    style_bits = list(profile.get("speaking_style", []))
+    if profile.get("catchphrases"):
+        style_bits.append(f"口癖：{'、'.join(profile['catchphrases'][:5])}")
+    if style_bits:
+        memories.append(
+            make_memory(
+                "response_rule",
+                f"扮演{name}时，说话方式偏：{'、'.join(style_bits[:8])}",
+                0.84,
+                True,
+                evidence,
+            )
+        )
+    habits = list(profile.get("habits", [])) + list(profile.get("conversation_habits", []))
+    if habits:
+        memories.append(
+            make_memory(
+                "relationship_signal",
+                f"{name}的互动习惯：{'、'.join(habits[:8])}",
+                0.78,
+                True,
+                evidence,
+            )
+        )
+    if profile.get("summary"):
+        memories.append(
+            make_memory("fact", f"{name}的人格摘要：{profile['summary']}", 0.72, True, evidence)
+        )
+
+    for memory in memories:
+        memory["persona_entity_id"] = entity_id
+        memory["source_type"] = "persona_import"
+    return memories
+
+
+# ---------------------------------------------------------------------------
+# improved local-fallback name detection
+# ---------------------------------------------------------------------------
+
+_NARRATIVE_TRAIT_PATTERNS: dict[str, list[str]] = {
+    "经历了": ["有故事", "成熟", "有阅历"],
+    "独自": ["独立", "坚强"],
+    "失去": ["敏感", "珍惜当下"],
+    "保护": ["可靠", "有担当"],
+    "照顾": ["温柔", "有耐心"],
+    "坚持": ["坚韧", "有毅力"],
+    "旅行": ["开朗", "爱自由"],
+    "阅读": ["安静", "有深度"],
+    "战争": ["坚韧", "深刻"],
+    "病": ["坚强", "敏感"],
+    "创业": ["有主见", "抗压"],
+    "支教": ["善良", "有理想"],
+    "留学": ["独立", "适应力强"],
+    "画画": ["细腻", "安静"],
+    "写": ["细腻", "有表达欲"],
+    "音乐": ["感性", "细腻"],
+}
+
+
+def _infer_traits_from_narrative(text: str) -> list[str]:
+    """Heuristic trait inference from narrative keywords — local fallback only."""
+
+    traits: list[str] = []
+    for keyword, candidates in _NARRATIVE_TRAIT_PATTERNS.items():
+        if keyword in text:
+            traits.extend(candidates)
+    return _unique(traits)[:6]
+
+
+def _extract_subject_name(text: str, hint_name: str | None = None) -> str | None:
+    """Extract the likely subject name from narrative text.
+
+    If *hint_name* is provided, confirm it appears in the text first.
+    Otherwise scans for explicit naming patterns, then sentence-subject names,
+    then the most frequent 2–3 character proper noun.
+    """
+
+    common_words = {"今天", "明天", "昨天", "以前", "现在", "以后", "然后", "但是", "所以", "因为", "不过", "虽然", "其实", "还好", "总是"}
+
+    if hint_name and hint_name.strip() and hint_name.strip() in text:
+        return hint_name.strip()
+
+    # explicit naming patterns
+    for pattern in [
+        r"(?:名字|姓名|称呼)(?:叫做|设定为|叫|是|为)?[:： ]*([^\n，。,.；;]{1,16})",
+        r"(?:你叫|你是|叫做|称为)[:： ]*([^\n，。,.；;]{1,16})",
+        r"我叫[:： ]*([^\n，。,.；;]{1,16})",
+        r"她叫[:： ]*([^\n，。,.；;]{1,16})",
+        r"他叫[:： ]*([^\n，。,.；;]{1,16})",
+    ]:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()
+
+    # sentence-subject pattern: "林夏：" or "林夏走过来" or "林夏从小..."
+    subject_match = re.search(r"(?:^|\n|。)([一-鿿]{2,3})(?:[：:，,\s]|[从小跟走说去])", text)
+    if subject_match:
+        name = subject_match.group(1).strip()
+        if name not in common_words:
+            return name
+
+    # fallback: most frequent 2-3 char Chinese name-like token
+    name_candidates: dict[str, int] = {}
+    for match in re.finditer(r"[一-鿿]{2,3}", text):
+        token = match.group()
+        if token in common_words:
+            continue
+        if re.search(r"[的了是在不和有就我都要可以没]", token):
+            continue
+        name_candidates[token] = name_candidates.get(token, 0) + 1
+    if name_candidates:
+        return max(name_candidates, key=lambda k: name_candidates[k])
+
+    return None

@@ -54,6 +54,7 @@ def default_state() -> dict[str, Any]:
         "persona_versions": [],
         "active_persona_id": None,
         "memories": [],
+        "persona_events": [],
         "generation_logs": [],
     }
 

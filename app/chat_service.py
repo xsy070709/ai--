@@ -35,11 +35,24 @@ from .memory import (
 from .memory.schema import make_memory
 from .persona import (
     active_persona_text,
+    build_persona_learning_memories,
     initialize_persona,
     learn_persona_profile,
     parse_persona_learning_json,
     persona_from_learned_profile,
     persona_learning_prompt,
+)
+from .persona_import import ImportSessionManager
+from .persona_events import (
+    apply_event_trait_effects,
+    build_event_context,
+    build_event_taboo_context,
+    check_taboo_triggers,
+    create_event as create_persona_event_obj,
+    event_to_memory,
+    maintain_events,
+    mark_event_acknowledged,
+    resolve_event,
 )
 from .storage import StorageBackend, new_id, now_iso
 from .time_context import current_time_context
@@ -49,6 +62,7 @@ class ChatService:
     def __init__(self, store: StorageBackend, gateway: DeepSeekGateway) -> None:
         self.store = store
         self.gateway = gateway
+        self._import_sessions: ImportSessionManager | None = None
         self.memory_extractor_init_error = None
         self.intent_classifier_init_error = None
         try:
@@ -61,6 +75,12 @@ class ChatService:
         except Exception as exc:
             self.intent_classifier_init_error = f"{type(exc).__name__}: {exc}"
             self.intent_classifier = RuleBasedIntentClassifier()
+
+    @property
+    def import_sessions(self) -> ImportSessionManager:
+        if self._import_sessions is None:
+            self._import_sessions = ImportSessionManager(self.gateway)
+        return self._import_sessions
 
     def status(self) -> dict[str, Any]:
         state = self.store.snapshot()
@@ -78,6 +98,7 @@ class ChatService:
                 "configured": self.gateway.settings.has_deepseek_key,
                 "model": self.gateway.settings.deepseek_chat_model,
             },
+            "persona_events": self.get_persona_events(),
             "memory_params": {"profile": DEFAULT_MEMORY_PROFILE, "warnings": PARAMETER_LOAD_WARNINGS},
             "time": current_time_context(),
         }
@@ -106,6 +127,7 @@ class ChatService:
             {
                 **entity,
                 "active": entity.get("id") == active_id,
+                "display_name": entity.get("name") or self._active_persona_name_for_entity(state, entity.get("id", "")),
                 "persona": self._active_persona_for_entity(state, entity.get("id", "")),
                 "message_count": len(
                     state.get("sessions", {}).get(entity.get("active_session_id"), {}).get("messages", [])
@@ -160,6 +182,9 @@ class ChatService:
             if session is not None:
                 session["title"] = new_name
                 session["updated_at"] = now_iso()
+            persona = self._active_persona_for_entity(state, entity_id)
+            if persona is not None:
+                self._rename_persona(persona, new_name)
             return deepcopy(entity)
 
         return self.store.mutate(mutate)
@@ -289,7 +314,7 @@ class ChatService:
                 entity = self._entity_by_id(state, entity_id)
                 if entity is not None:
                     entity["active_persona_id"] = persona["id"]
-                    entity["name"] = persona.get("identity", {}).get("name") or entity.get("name")
+                    self._apply_learned_entity_name(state, entity, persona)
                     entity["updated_at"] = now_iso()
             return persona
 
@@ -345,7 +370,7 @@ class ChatService:
             if confirm:
                 entity["active_persona_id"] = persona["id"]
                 next_state["active_persona_id"] = persona["id"]
-            entity["name"] = persona.get("identity", {}).get("name") or entity.get("name")
+            self._apply_learned_entity_name(next_state, entity, persona)
             entity["updated_at"] = now_iso()
             next_state.setdefault("generation_logs", []).append(
                 {
@@ -399,6 +424,191 @@ class ChatService:
 
         return self.store.mutate(mutate)
 
+    # ------------------------------------------------------------------
+    # import wizard session delegates
+    # ------------------------------------------------------------------
+
+    async def start_import_session(
+        self,
+        text: str,
+        *,
+        source_type: str = "mixed",
+        persona_entity_id: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.store.snapshot()
+        entity_id = persona_entity_id or self._active_entity_id(state)
+        entity = self._entity_by_id(state, entity_id)
+        persona_name = entity.get("name", "") if entity else ""
+
+        session = await self.import_sessions.create_session(
+            source_text=text,
+            source_type=source_type,
+            entity_id=entity_id,
+            persona_name=persona_name,
+        )
+        return {
+            "session_id": session.session_id,
+            "entity_id": session.entity_id,
+            "initial_profile": session.initial_profile,
+            "current_profile": session.current_profile,
+            "messages": session.messages,
+            "status": session.status,
+        }
+
+    async def import_session_chat(self, session_id: str, user_message: str) -> dict[str, Any]:
+        return await self.import_sessions.send_message(session_id, user_message)
+
+    def get_import_session_state(self, session_id: str) -> dict[str, Any] | None:
+        return self.import_sessions.get_session_state(session_id)
+
+    def update_import_session_profile(self, session_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        return self.import_sessions.update_profile(session_id, patch)
+
+    async def confirm_import_session(self, session_id: str, final_profile: dict[str, Any]) -> dict[str, Any]:
+        session = self.import_sessions.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+
+        # build persona from the final profile
+        persona = persona_from_learned_profile(
+            session.source_text,
+            final_profile,
+            source_type=session.source_type,
+        )
+        persona["status"] = "active"
+        persona["persona_entity_id"] = session.entity_id
+
+        learned_memories = build_persona_learning_memories(
+            persona,
+            final_profile,
+            session.source_text,
+            session.entity_id,
+        )
+
+        def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
+            entity = self._entity_by_id(next_state, session.entity_id)
+            if entity is None:
+                return {}
+            versions = next_state.setdefault("persona_versions", [])
+            entity_versions = [p for p in versions if self._item_in_entity(p, session.entity_id)]
+            persona["version"] = len(entity_versions) + 1
+            versions.append(persona)
+            all_memories = next_state.setdefault("memories", [])
+            self._upsert_entity_memories(all_memories, learned_memories, session.entity_id)
+            entity["active_persona_id"] = persona["id"]
+            next_state["active_persona_id"] = persona["id"]
+            self._apply_learned_entity_name(next_state, entity, persona)
+            entity["updated_at"] = now_iso()
+            next_state.setdefault("generation_logs", []).append(
+                {
+                    "id": new_id("gen"),
+                    "persona_entity_id": session.entity_id,
+                    "created_at": now_iso(),
+                    "purpose": "persona_learn",
+                    "provider": "local",
+                    "model": "import_wizard",
+                    "degraded": False,
+                    "elapsed_ms": 0,
+                    "error": None,
+                    "usage": None,
+                    "prompt_manifest": {
+                        "source_type": session.source_type,
+                        "persona_id": persona["id"],
+                        "persona_entity_id": session.entity_id,
+                        "learner": final_profile.get("learner", "import_wizard"),
+                        "created_memory_ids": [m["id"] for m in learned_memories],
+                    },
+                    "feedback_signals": [],
+                }
+            )
+            return {"entity": dict(entity), "persona": persona, "created_memories": learned_memories}
+
+        result = self.store.mutate(mutate)
+        self.import_sessions.delete_session(session_id)
+        return {
+            **result,
+            "learned_profile": final_profile,
+        }
+
+    def delete_import_session(self, session_id: str) -> bool:
+        return self.import_sessions.delete_session(session_id)
+
+    # ------------------------------------------------------------------
+    # persona event CRUD
+    # ------------------------------------------------------------------
+
+    def get_persona_events(self) -> list[dict[str, Any]]:
+        state = self.store.snapshot()
+        entity_id = self._active_entity_id(state)
+        return [e for e in state.get("persona_events", []) if self._item_in_entity(e, entity_id)]
+
+    def create_persona_event(self, **fields: Any) -> dict[str, Any]:
+        state = self.store.snapshot()
+        entity_id = self._active_entity_id(state)
+        event = create_persona_event_obj(persona_entity_id=entity_id, **fields)
+        memory = event_to_memory(event)
+        memory["persona_entity_id"] = entity_id
+
+        def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
+            next_state.setdefault("persona_events", []).append(event)
+            next_state.setdefault("memories", []).append(memory)
+            return event
+
+        return self.store.mutate(mutate)
+
+    def update_persona_event(self, event_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            for event in state.get("persona_events", []):
+                if event.get("id") == event_id:
+                    allowed = {
+                        "content", "event_type", "impact_scope", "expires_at",
+                        "trait_effects", "becomes_topic", "topic_trigger_words",
+                        "becomes_taboo", "taboo_keywords", "resolution_note",
+                    }
+                    for key, value in patch.items():
+                        if key in allowed:
+                            event[key] = value
+                    return dict(event)
+            return None
+
+        return self.store.mutate(mutate)
+
+    def delete_persona_event(self, event_id: str) -> bool:
+        def mutate(state: dict[str, Any]) -> bool:
+            events = state.get("persona_events", [])
+            for event in events:
+                if event.get("id") == event_id:
+                    events.remove(event)
+                    return True
+            return False
+
+        return self.store.mutate(mutate)
+
+    def resolve_persona_event(self, event_id: str, note: str = "") -> dict[str, Any] | None:
+        entity_id = self._active_entity_id(self.store.snapshot())
+
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            for event in state.get("persona_events", []):
+                if event.get("id") == event_id:
+                    resolve_event(event, note)
+                    memory = event_to_memory(event)
+                    memory["persona_entity_id"] = entity_id
+                    state.setdefault("memories", []).append(memory)
+                    return dict(event)
+            return None
+
+        return self.store.mutate(mutate)
+
+    def acknowledge_persona_event(self, event_id: str) -> dict[str, Any] | None:
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            for event in state.get("persona_events", []):
+                if event.get("id") == event_id:
+                    mark_event_acknowledged(event)
+                    return dict(event)
+            return None
+
+        return self.store.mutate(mutate)
+
     async def chat(self, user_text: str) -> dict[str, Any]:
         user_message = {"id": new_id("msg"), "role": "user", "content": user_text, "created_at": now_iso()}
 
@@ -408,6 +618,14 @@ class ChatService:
         snapshot_state_revision = _state_revision(state)
         session = state["sessions"][snapshot_session_id]
         persona = self._active_persona(state)
+        # ── event-driven dynamic traits ─────────────────────────
+        all_entity_events = self._entity_events(state, snapshot_entity_id)
+        active_events = [e for e in all_entity_events if e.get("status") in {"active", "fading"}]
+        dynamic_traits = None
+        if persona and active_events:
+            base_traits = persona.get("personality", {}).get("stable_traits", [])
+            if base_traits:
+                dynamic_traits = apply_event_trait_effects(base_traits, active_events)
         time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
         memory_user_text = logical_turn["text"]
@@ -439,6 +657,9 @@ class ChatService:
         prompt_summaries = session.get("summaries", [])
         prompt_summary_boundary = int(prompt_summaries[-1].get("message_count", 0)) if prompt_summaries else 0
         prompt_work_memory = work_memory(session.get("messages", []), user_text, after_message_count=prompt_summary_boundary)
+        # ── taboo detection ────────────────────────────────────
+        taboo_triggered = check_taboo_triggers(memory_user_text, all_entity_events) if all_entity_events else []
+
         model_messages = self._build_prompt(
             persona,
             memory_context,
@@ -446,6 +667,8 @@ class ChatService:
             time_context,
             prompt_summaries,
             prompt_work_memory,
+            active_events=active_events,
+            dynamic_traits=dynamic_traits,
         )
         result = await self.gateway.chat(model_messages, purpose="chat")
         memory_audit = audit_memory_use(result.text, memory_context)
@@ -507,6 +730,31 @@ class ChatService:
             self._upsert_entity_memories(all_state_memories, reviewed_reflections["accepted"], write_entity_id)
             queued_reflections = enqueue_confirmation(next_state, reviewed_reflections["needs_confirmation"])
             maintenance_result = maintain_memories(current_memories)
+            # ── event maintenance ───────────────────────────────
+            all_events = next_state.setdefault("persona_events", [])
+            entity_events = [e for e in all_events if self._item_in_entity(e, write_entity_id)]
+            event_ops = maintain_events(entity_events, now_iso())
+            # apply event status transitions
+            for op in event_ops:
+                for event in all_events:
+                    if event.get("id") == op["event_id"]:
+                        event[op["field"]] = op["value"]
+                        break
+            # auto-acknowledge: if user discussed a topic event
+            for event in all_events:
+                if not self._item_in_entity(event, write_entity_id):
+                    continue
+                if event.get("status") != "active":
+                    continue
+                if not event.get("becomes_topic"):
+                    continue
+                triggers = event.get("topic_trigger_words") or []
+                if triggers and any(t.lower() in (memory_user_text or "").lower() for t in triggers):
+                    mark_event_acknowledged(event)
+                    # convert resolved/acknowledged events to memories
+                    event_memory = event_to_memory(event)
+                    event_memory["persona_entity_id"] = write_entity_id
+                    all_state_memories.append(event_memory)
             prompt_manifest = {
                 "api_message_count": len(model_messages),
                 "work_memory_count": len(prompt_work_memory),
@@ -550,6 +798,10 @@ class ChatService:
                 "intent_classifier_error": intent_error,
                 "intent": intent,
                 "has_persona": persona is not None,
+                "active_event_count": len(active_events),
+                "taboo_triggered": taboo_triggered,
+                "dynamic_traits_applied": dynamic_traits is not None,
+                "event_ops_applied": len(event_ops),
                 "time_context": time_context,
             }
             previous_log = next_state.get("generation_logs", [])[-1] if next_state.get("generation_logs") else None
@@ -665,12 +917,52 @@ class ChatService:
             None,
         )
 
+    def _active_persona_name_for_entity(self, state: dict[str, Any], entity_id: str) -> str:
+        persona = self._active_persona_for_entity(state, entity_id)
+        if persona is None:
+            return ""
+        return persona.get("identity", {}).get("name", "")
+
     def _active_entity_id(self, state: dict[str, Any]) -> str:
         entities = state.get("persona_entities") or []
         return state.get("active_persona_entity_id") or (entities[0].get("id") if entities else "entity_default")
 
     def _entity_by_id(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
         return next((entity for entity in state.get("persona_entities", []) if entity.get("id") == entity_id), None)
+
+    def _apply_learned_entity_name(
+        self,
+        state: dict[str, Any],
+        entity: dict[str, Any],
+        persona: dict[str, Any],
+    ) -> None:
+        persona_name = persona.get("identity", {}).get("name", "")
+        if self._is_meaningful_persona_name(persona_name):
+            entity["name"] = persona_name
+        elif self._is_meaningful_persona_name(entity.get("name", "")):
+            self._rename_persona(persona, entity["name"])
+        session = state.get("sessions", {}).get(entity.get("active_session_id"))
+        if session is not None:
+            session["title"] = entity.get("name") or session.get("title") or "未命名人格"
+            session["updated_at"] = now_iso()
+
+    def _rename_persona(self, persona: dict[str, Any], new_name: str) -> None:
+        identity = persona.setdefault("identity", {})
+        old_name = identity.get("name", "")
+        identity["name"] = new_name
+        if identity.get("self_description"):
+            identity["self_description"] = str(identity["self_description"]).replace(old_name, new_name)
+        learned_profile = persona.get("learned_profile")
+        if isinstance(learned_profile, dict):
+            learned_profile["name"] = new_name
+        system_prompt = persona.setdefault("system_prompt", {})
+        content = system_prompt.get("content", "")
+        if content and old_name:
+            system_prompt["content"] = content.replace(old_name, new_name)
+
+    def _is_meaningful_persona_name(self, name: str | None) -> bool:
+        value = str(name or "").strip()
+        return bool(value and value not in {"未命名", "未命名好友", "未命名人格", "默认人格"})
 
     def _new_entity_state(self, name: str) -> dict[str, dict[str, Any]]:
         entity_id = new_id("entity")
@@ -718,6 +1010,9 @@ class ChatService:
     def _entity_memories(self, state: dict[str, Any], entity_id: str) -> list[dict[str, Any]]:
         return [memory for memory in state.get("memories", []) if self._item_in_entity(memory, entity_id)]
 
+    def _entity_events(self, state: dict[str, Any], entity_id: str) -> list[dict[str, Any]]:
+        return [event for event in state.get("persona_events", []) if self._item_in_entity(event, entity_id)]
+
     def _tag_memories(self, memories: list[dict[str, Any]], entity_id: str) -> None:
         for memory in memories:
             memory["persona_entity_id"] = entity_id
@@ -743,45 +1038,7 @@ class ChatService:
         source_text: str,
         entity_id: str,
     ) -> list[dict[str, Any]]:
-        name = persona.get("identity", {}).get("name") or "该人格"
-        evidence = source_text[:240]
-        memories: list[dict[str, Any]] = []
-        if profile.get("traits"):
-            memories.append(
-                make_memory(
-                    "stable_impression",
-                    f"{name}的稳定性格：{'、'.join(profile['traits'][:6])}",
-                    0.82,
-                    True,
-                    evidence,
-                )
-            )
-        style_bits = list(profile.get("speaking_style", []))
-        if profile.get("catchphrases"):
-            style_bits.append(f"口癖：{'、'.join(profile['catchphrases'][:5])}")
-        if style_bits:
-            memories.append(
-                make_memory(
-                    "response_rule",
-                    f"扮演{name}时，说话方式偏：{'、'.join(style_bits[:8])}",
-                    0.84,
-                    True,
-                    evidence,
-                )
-            )
-        if profile.get("habits") or profile.get("conversation_habits"):
-            habits = profile.get("habits", []) + profile.get("conversation_habits", [])
-            memories.append(
-                make_memory(
-                    "relationship_signal",
-                    f"{name}的互动习惯：{'、'.join(habits[:8])}",
-                    0.78,
-                    True,
-                    evidence,
-                )
-            )
-        if profile.get("summary"):
-            memories.append(make_memory("fact", f"{name}的人格摘要：{profile['summary']}", 0.72, True, evidence))
+        memories = build_persona_learning_memories(persona, profile, source_text, entity_id)
         self._tag_memories(memories, entity_id)
         for memory in memories:
             memory["source_type"] = "persona_import"
@@ -814,6 +1071,9 @@ class ChatService:
         time_context: dict[str, str] | None = None,
         summaries: list[dict[str, Any]] | None = None,
         prompt_work_memory: list[dict[str, str]] | None = None,
+        *,
+        active_events: list[dict[str, Any]] | None = None,
+        dynamic_traits: list[str] | None = None,
     ) -> list[dict[str, str]]:
         time_context = time_context or current_time_context()
         prompt_work_memory = prompt_work_memory or []
@@ -826,14 +1086,33 @@ class ChatService:
             ]
         )
         time_runtime_context = "\n".join(["运行时上下文：", time_context["prompt_text"]])
-        return [
-            {"role": "system", "content": _stable_system_prompt(persona)},
+
+        # patch persona with event-driven dynamic traits if provided
+        effective_persona = persona
+        if persona is not None and dynamic_traits is not None:
+            effective_persona = dict(persona)
+            personality = dict(effective_persona.get("personality", {}))
+            personality["stable_traits"] = dynamic_traits
+            effective_persona["personality"] = personality
+
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": _stable_system_prompt(effective_persona)},
             {"role": "system", "content": summary_context},
             {"role": "system", "content": memory_runtime_context},
             {"role": "system", "content": time_runtime_context},
-            *prompt_work_memory,
-            {"role": "user", "content": user_text},
         ]
+
+        # inject event context as a 5th system message when present
+        if active_events:
+            event_ctx = build_event_context(active_events)
+            taboo_ctx = build_event_taboo_context(active_events)
+            combined = "\n\n".join(filter(None, [event_ctx, taboo_ctx]))
+            if combined:
+                messages.append({"role": "system", "content": combined})
+
+        messages.extend(prompt_work_memory)
+        messages.append({"role": "user", "content": user_text})
+        return messages
 
     def _debug_raw_flow(
         self,
