@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from .llm_gateway import DeepSeekGateway
@@ -31,7 +32,15 @@ from .memory import (
     DEFAULT_MEMORY_PROFILE,
     PARAMETER_LOAD_WARNINGS,
 )
-from .persona import active_persona_text, initialize_persona
+from .memory.schema import make_memory
+from .persona import (
+    active_persona_text,
+    initialize_persona,
+    learn_persona_profile,
+    parse_persona_learning_json,
+    persona_from_learned_profile,
+    persona_learning_prompt,
+)
 from .storage import StorageBackend, new_id, now_iso
 from .time_context import current_time_context
 
@@ -58,10 +67,12 @@ class ChatService:
         persona = self._active_persona(state)
         return {
             "session_id": state["active_session_id"],
+            "active_persona_entity_id": self._active_entity_id(state),
+            "persona_entities": self.persona_entities(),
             "persona": persona,
             "layers": memory_layers(state),
             "profile": build_user_profile(self.store.list_memories(status="active")),
-            "memory_confirmations": pending_confirmations(state),
+            "memory_confirmations": self.memory_confirmations(),
             "llm": {
                 "provider": "deepseek",
                 "configured": self.gateway.settings.has_deepseek_key,
@@ -72,23 +83,88 @@ class ChatService:
         }
 
     def messages(self) -> list[dict[str, Any]]:
-        session = self.store.session()
+        state = self.store.snapshot()
+        session = state["sessions"][state["active_session_id"]]
         return session.get("messages", [])
 
     def memories(self) -> list[dict[str, Any]]:
         return self.store.list_memories()
 
     def memory_confirmations(self) -> list[dict[str, Any]]:
-        return pending_confirmations(self.store.snapshot())
+        state = self.store.snapshot()
+        entity_id = self._active_entity_id(state)
+        return [
+            item
+            for item in pending_confirmations(state)
+            if self._item_in_entity(item, entity_id) or self._item_in_entity(item.get("candidate", {}), entity_id)
+        ]
+
+    def persona_entities(self) -> list[dict[str, Any]]:
+        state = self.store.snapshot()
+        active_id = self._active_entity_id(state)
+        return [
+            {
+                **entity,
+                "active": entity.get("id") == active_id,
+                "persona": self._active_persona_for_entity(state, entity.get("id", "")),
+                "message_count": len(
+                    state.get("sessions", {}).get(entity.get("active_session_id"), {}).get("messages", [])
+                ),
+            }
+            for entity in state.get("persona_entities", [])
+        ]
+
+    def create_persona_entity(self, name: str | None = None, *, activate: bool = True) -> dict[str, Any]:
+        entity_id = new_id("entity")
+        session_id = new_id("session")
+        now = now_iso()
+
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            entity = {
+                "id": entity_id,
+                "name": name.strip() if name and name.strip() else "未命名人格",
+                "status": "active",
+                "created_at": now,
+                "updated_at": now,
+                "active_session_id": session_id,
+                "active_persona_id": None,
+            }
+            state.setdefault("persona_entities", []).append(entity)
+            state.setdefault("sessions", {})[session_id] = {
+                "id": session_id,
+                "persona_entity_id": entity_id,
+                "title": entity["name"],
+                "created_at": now,
+                "updated_at": now,
+                "messages": [],
+                "summaries": [],
+            }
+            if activate:
+                self._activate_entity_in_state(state, entity_id)
+            return entity
+
+        return self.store.mutate(mutate)
+
+    def switch_persona_entity(self, entity_id: str) -> dict[str, Any] | None:
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            entity = self._activate_entity_in_state(state, entity_id)
+            return entity
+
+        return self.store.mutate(mutate)
 
     def debug_snapshot(self) -> dict[str, Any]:
         state = self.store.snapshot()
+        entity_id = self._active_entity_id(state)
         memories = self.store.list_memories()
         grouped_memories: dict[str, list[dict[str, Any]]] = {}
         for memory in memories:
             grouped_memories.setdefault(memory.get("type", "unknown"), []).append(memory)
         session = state["sessions"][state["active_session_id"]]
-        generation_logs = self.store.list_generation_logs(limit=80)
+        generation_logs = [
+            log
+            for log in self.store.list_generation_logs(limit=160)
+            if self._item_in_entity(log, entity_id) or not log.get("persona_entity_id")
+        ][-80:]
         api_requests = self.gateway.debug_requests()
         return {
             "session": {
@@ -100,35 +176,139 @@ class ChatService:
             },
             "memories": memories,
             "memories_by_type": grouped_memories,
-            "memory_confirmations": pending_confirmations(state),
+            "memory_confirmations": self.memory_confirmations(),
             "generation_logs": generation_logs,
             "api_requests": api_requests,
             "raw_flow": self._debug_raw_flow(session, memories, generation_logs, api_requests),
             "status": self.status(),
+            "persona_entities": self.persona_entities(),
+            "active_persona_entity_id": entity_id,
         }
 
     def import_background(self, text: str, confirm: bool = True) -> dict[str, Any]:
         persona = initialize_persona(text)
+        state = self.store.snapshot()
+        entity_id = self._active_entity_id(state)
+        persona["persona_entity_id"] = entity_id
         if confirm:
             persona["status"] = "active"
 
         def mutate(state: dict[str, Any]) -> dict[str, Any]:
             old_versions = state.get("persona_versions", [])
-            persona["version"] = len(old_versions) + 1
+            entity_versions = [p for p in state.get("persona_versions", []) if self._item_in_entity(p, entity_id)]
+            persona["version"] = len(entity_versions) + 1
             old_versions.append(persona)
             state["persona_versions"] = old_versions
             if confirm:
                 state["active_persona_id"] = persona["id"]
+                entity = self._entity_by_id(state, entity_id)
+                if entity is not None:
+                    entity["active_persona_id"] = persona["id"]
+                    entity["name"] = persona.get("identity", {}).get("name") or entity.get("name")
+                    entity["updated_at"] = now_iso()
             return persona
 
         return self.store.mutate(mutate)
 
+    async def import_persona_materials(
+        self,
+        text: str,
+        *,
+        source_type: str = "mixed",
+        persona_entity_id: str | None = None,
+        confirm: bool = True,
+    ) -> dict[str, Any]:
+        state = self.store.snapshot()
+        entity_id = persona_entity_id or self._active_entity_id(state)
+        if self._entity_by_id(state, entity_id) is None:
+            entity_id = self.create_persona_entity("未命名人格", activate=False)["id"]
+
+        llm_profile = None
+        llm_result = None
+        try:
+            llm_result = await self.gateway.structured(persona_learning_prompt(text, source_type), purpose="persona_learn")
+            llm_profile = parse_persona_learning_json(llm_result.text)
+        except Exception as exc:  # noqa: BLE001 - keep import usable when model is unavailable
+            llm_result = type(
+                "PersonaLearningError",
+                (),
+                {
+                    "provider": "local",
+                    "model": "fallback",
+                    "degraded": True,
+                    "elapsed_ms": 0,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "usage": None,
+                },
+            )()
+        learned_profile = learn_persona_profile(text, source_type=source_type, llm_profile=llm_profile)
+        persona = persona_from_learned_profile(text, learned_profile, source_type=source_type)
+        persona["status"] = "active" if confirm else "draft"
+        persona["persona_entity_id"] = entity_id
+        learned_memories = self._persona_learning_memories(persona, learned_profile, text, entity_id)
+
+        def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
+            entity = self._entity_by_id(next_state, entity_id)
+            if entity is None:
+                return {}
+            versions = next_state.setdefault("persona_versions", [])
+            entity_versions = [p for p in versions if self._item_in_entity(p, entity_id)]
+            persona["version"] = len(entity_versions) + 1
+            versions.append(persona)
+            all_memories = next_state.setdefault("memories", [])
+            self._upsert_entity_memories(all_memories, learned_memories, entity_id)
+            if confirm:
+                entity["active_persona_id"] = persona["id"]
+                next_state["active_persona_id"] = persona["id"]
+            entity["name"] = persona.get("identity", {}).get("name") or entity.get("name")
+            entity["updated_at"] = now_iso()
+            next_state.setdefault("generation_logs", []).append(
+                {
+                    "id": new_id("gen"),
+                    "persona_entity_id": entity_id,
+                    "created_at": now_iso(),
+                    "purpose": "persona_learn",
+                    "provider": getattr(llm_result, "provider", "local"),
+                    "model": getattr(llm_result, "model", "fallback"),
+                    "degraded": getattr(llm_result, "degraded", True),
+                    "elapsed_ms": getattr(llm_result, "elapsed_ms", 0),
+                    "error": getattr(llm_result, "error", None),
+                    "usage": getattr(llm_result, "usage", None),
+                    "prompt_manifest": {
+                        "source_type": source_type,
+                        "persona_id": persona["id"],
+                        "persona_entity_id": entity_id,
+                        "learner": learned_profile.get("learner"),
+                        "created_memory_ids": [memory["id"] for memory in learned_memories],
+                    },
+                    "feedback_signals": [],
+                }
+            )
+            return {"entity": deepcopy(entity), "persona": persona, "created_memories": learned_memories}
+
+        result = self.store.mutate(mutate)
+        return {
+            **result,
+            "learned_profile": learned_profile,
+            "llm": {
+                "provider": getattr(llm_result, "provider", "local"),
+                "model": getattr(llm_result, "model", "fallback"),
+                "degraded": getattr(llm_result, "degraded", True),
+                "error": getattr(llm_result, "error", None),
+            },
+        }
+
     def confirm_persona(self, persona_id: str) -> dict[str, Any] | None:
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            entity_id = self._active_entity_id(state)
             for persona in state.get("persona_versions", []):
-                if persona["id"] == persona_id:
+                if persona["id"] == persona_id and self._item_in_entity(persona, entity_id):
                     persona["status"] = "active"
                     state["active_persona_id"] = persona_id
+                    entity = self._entity_by_id(state, entity_id)
+                    if entity is not None:
+                        entity["active_persona_id"] = persona_id
+                        entity["updated_at"] = now_iso()
                     return persona
             return None
 
@@ -138,6 +318,7 @@ class ChatService:
         user_message = {"id": new_id("msg"), "role": "user", "content": user_text, "created_at": now_iso()}
 
         state = self.store.snapshot()
+        snapshot_entity_id = self._active_entity_id(state)
         snapshot_session_id = state["active_session_id"]
         snapshot_state_revision = _state_revision(state)
         session = state["sessions"][snapshot_session_id]
@@ -145,7 +326,7 @@ class ChatService:
         time_context = current_time_context()
         logical_turn = build_logical_turn(session.get("messages", []), user_message)
         memory_user_text = logical_turn["text"]
-        all_memories = state.get("memories", [])
+        all_memories = self._entity_memories(state, snapshot_entity_id)
         recall_candidates = self._memory_recall_candidates(all_memories, memory_user_text)
         memory_context = build_memory_context(
             all_memories,
@@ -207,12 +388,16 @@ class ChatService:
             extraction_error = f"{type(exc).__name__}: {exc}"
             extracted = []
         reviewed = review_memory_candidates(extracted)
+        self._tag_memories(reviewed["accepted"] + reviewed["needs_confirmation"] + reviewed["rejected"], snapshot_entity_id)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
             write_session_id = snapshot_session_id if snapshot_session_id in next_state["sessions"] else next_state["active_session_id"]
+            write_entity_id = self._session_entity_id(next_state, write_session_id)
             active_session = next_state["sessions"][write_session_id]
             commit_state_revision = _state_revision(next_state)
             active_session_changed = next_state.get("active_session_id") != snapshot_session_id
+            user_message["meta"] = {"persona_entity_id": write_entity_id}
+            assistant_message["meta"]["persona_entity_id"] = write_entity_id
             active_session["messages"].extend([user_message, assistant_message])
             active_session["updated_at"] = now_iso()
             summaries = active_session.setdefault("summaries", [])
@@ -220,16 +405,21 @@ class ChatService:
             summary = build_session_summary(active_session["messages"], after_message_count=last_summary_count)
             if summary and should_build_session_summary(active_session["messages"], summaries):
                 active_session.setdefault("summaries", []).append(summary)
-            current_memories = next_state.setdefault("memories", [])
+            all_state_memories = next_state.setdefault("memories", [])
+            current_memories = [memory for memory in all_state_memories if self._item_in_entity(memory, write_entity_id)]
             correction_result = apply_user_corrections(current_memories, memory_user_text, intent=intent)
             closed_memories = close_resolved_open_loops(current_memories, memory_user_text, intent=intent)
             mark_recalled(current_memories, [m["id"] for m in memories])
-            upsert_memories(current_memories, correction_result["created"])
-            upsert_memories(current_memories, reviewed["accepted"])
+            self._upsert_entity_memories(all_state_memories, correction_result["created"], write_entity_id)
+            self._upsert_entity_memories(all_state_memories, reviewed["accepted"], write_entity_id)
             queued_confirmations = enqueue_confirmation(next_state, reviewed["needs_confirmation"])
             reflections = generate_reflections(current_memories)
             reviewed_reflections = review_memory_candidates(reflections)
-            upsert_memories(current_memories, reviewed_reflections["accepted"])
+            self._tag_memories(
+                reviewed_reflections["accepted"] + reviewed_reflections["needs_confirmation"] + reviewed_reflections["rejected"],
+                write_entity_id,
+            )
+            self._upsert_entity_memories(all_state_memories, reviewed_reflections["accepted"], write_entity_id)
             queued_reflections = enqueue_confirmation(next_state, reviewed_reflections["needs_confirmation"])
             maintenance_result = maintain_memories(current_memories)
             prompt_manifest = {
@@ -241,6 +431,8 @@ class ChatService:
                 "prompt_segments": _prompt_segments(model_messages),
                 "logical_turn": logical_turn,
                 "snapshot_session_id": snapshot_session_id,
+                "snapshot_persona_entity_id": snapshot_entity_id,
+                "write_persona_entity_id": write_entity_id,
                 "write_session_id": write_session_id,
                 "active_session_changed": active_session_changed,
                 "snapshot_state_revision": snapshot_state_revision,
@@ -280,6 +472,7 @@ class ChatService:
             next_state.setdefault("generation_logs", []).append(
                 {
                     "id": new_id("gen"),
+                    "persona_entity_id": write_entity_id,
                     "created_at": now_iso(),
                     "purpose": "chat",
                     "provider": result.provider,
@@ -327,7 +520,8 @@ class ChatService:
 
     def tidy_memory_store(self) -> dict[str, Any]:
         def mutate(state: dict[str, Any]) -> dict[str, Any]:
-            return tidy_memories(state.setdefault("memories", []))
+            entity_id = self._active_entity_id(state)
+            return tidy_memories([memory for memory in state.setdefault("memories", []) if self._item_in_entity(memory, entity_id)])
 
         return self.store.mutate(mutate)
 
@@ -339,19 +533,22 @@ class ChatService:
                 item["status"] = "accepted" if accept else "rejected"
                 item["resolved_at"] = now_iso()
                 candidate = item["candidate"]
+                entity_id = candidate.get("persona_entity_id") or self._active_entity_id(state)
                 if accept:
                     candidate["is_user_confirmed"] = True
                     candidate["quality_decision"] = "accept"
-                    upsert_memories(state.setdefault("memories", []), [candidate])
+                    self._upsert_entity_memories(state.setdefault("memories", []), [candidate], entity_id)
                 prompt_manifest = {
                     "confirmation_id": confirmation_id,
                     "candidate_memory_id": candidate.get("id"),
                     "candidate_type": candidate.get("type"),
+                    "persona_entity_id": entity_id,
                     "accepted": accept,
                 }
                 state.setdefault("generation_logs", []).append(
                     {
                         "id": new_id("gen"),
+                        "persona_entity_id": entity_id,
                         "created_at": now_iso(),
                         "purpose": "memory_confirmation",
                         "provider": "local",
@@ -372,6 +569,114 @@ class ChatService:
     def _active_persona(self, state: dict[str, Any]) -> dict[str, Any] | None:
         active_id = state.get("active_persona_id")
         return next((p for p in state.get("persona_versions", []) if p["id"] == active_id), None)
+
+    def _active_persona_for_entity(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
+        entity = self._entity_by_id(state, entity_id)
+        if entity is None:
+            return None
+        active_id = entity.get("active_persona_id")
+        return next(
+            (p for p in state.get("persona_versions", []) if p.get("id") == active_id and self._item_in_entity(p, entity_id)),
+            None,
+        )
+
+    def _active_entity_id(self, state: dict[str, Any]) -> str:
+        entities = state.get("persona_entities") or []
+        return state.get("active_persona_entity_id") or (entities[0].get("id") if entities else "entity_default")
+
+    def _entity_by_id(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
+        return next((entity for entity in state.get("persona_entities", []) if entity.get("id") == entity_id), None)
+
+    def _activate_entity_in_state(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
+        entity = self._entity_by_id(state, entity_id)
+        if entity is None:
+            return None
+        state["active_persona_entity_id"] = entity_id
+        state["active_session_id"] = entity.get("active_session_id") or state.get("active_session_id", "default")
+        state["active_persona_id"] = entity.get("active_persona_id")
+        entity["updated_at"] = now_iso()
+        return entity
+
+    def _session_entity_id(self, state: dict[str, Any], session_id: str) -> str:
+        session = state.get("sessions", {}).get(session_id, {})
+        return session.get("persona_entity_id") or self._active_entity_id(state)
+
+    def _item_in_entity(self, item: dict[str, Any] | None, entity_id: str) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return (item.get("persona_entity_id") or "entity_default") == entity_id
+
+    def _entity_memories(self, state: dict[str, Any], entity_id: str) -> list[dict[str, Any]]:
+        return [memory for memory in state.get("memories", []) if self._item_in_entity(memory, entity_id)]
+
+    def _tag_memories(self, memories: list[dict[str, Any]], entity_id: str) -> None:
+        for memory in memories:
+            memory["persona_entity_id"] = entity_id
+
+    def _upsert_entity_memories(
+        self,
+        all_memories: list[dict[str, Any]],
+        candidates: list[dict[str, Any]],
+        entity_id: str,
+    ) -> None:
+        self._tag_memories(candidates, entity_id)
+        scoped = [memory for memory in all_memories if self._item_in_entity(memory, entity_id)]
+        before_objects = {id(memory) for memory in all_memories}
+        upsert_memories(scoped, candidates)
+        for memory in scoped:
+            if id(memory) not in before_objects:
+                all_memories.append(memory)
+
+    def _persona_learning_memories(
+        self,
+        persona: dict[str, Any],
+        profile: dict[str, Any],
+        source_text: str,
+        entity_id: str,
+    ) -> list[dict[str, Any]]:
+        name = persona.get("identity", {}).get("name") or "该人格"
+        evidence = source_text[:240]
+        memories: list[dict[str, Any]] = []
+        if profile.get("traits"):
+            memories.append(
+                make_memory(
+                    "stable_impression",
+                    f"{name}的稳定性格：{'、'.join(profile['traits'][:6])}",
+                    0.82,
+                    True,
+                    evidence,
+                )
+            )
+        style_bits = list(profile.get("speaking_style", []))
+        if profile.get("catchphrases"):
+            style_bits.append(f"口癖：{'、'.join(profile['catchphrases'][:5])}")
+        if style_bits:
+            memories.append(
+                make_memory(
+                    "response_rule",
+                    f"扮演{name}时，说话方式偏：{'、'.join(style_bits[:8])}",
+                    0.84,
+                    True,
+                    evidence,
+                )
+            )
+        if profile.get("habits") or profile.get("conversation_habits"):
+            habits = profile.get("habits", []) + profile.get("conversation_habits", [])
+            memories.append(
+                make_memory(
+                    "relationship_signal",
+                    f"{name}的互动习惯：{'、'.join(habits[:8])}",
+                    0.78,
+                    True,
+                    evidence,
+                )
+            )
+        if profile.get("summary"):
+            memories.append(make_memory("fact", f"{name}的人格摘要：{profile['summary']}", 0.72, True, evidence))
+        self._tag_memories(memories, entity_id)
+        for memory in memories:
+            memory["source_type"] = "persona_import"
+        return memories
 
     def _memory_recall_candidates(self, memories: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
         limit = max(DEFAULT_MEMORY_PARAMS.recall.default_limit * 4, DEFAULT_MEMORY_PARAMS.recall.default_limit)

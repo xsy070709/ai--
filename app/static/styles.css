@@ -24,7 +24,9 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
@@ -127,9 +129,71 @@ textarea {
   line-height: 1.5;
 }
 
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 11px;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+}
+
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 143, 134, 0.12);
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 143, 134, 0.12);
+}
+
+.entity-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.entity-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+}
+
+.entity-item strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-item span,
+.entity-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.entity-item.active {
+  border-color: var(--accent);
+  background: rgba(15, 143, 134, 0.08);
+  color: var(--accent-dark);
+}
+
+.entity-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 #backgroundInput {

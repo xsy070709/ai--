@@ -27,9 +27,19 @@
 
         <section class="panel">
           <div class="panel-title">人格</div>
+          <div id="entityList" class="entity-list"></div>
+          <div class="entity-create">
+            <input id="entityNameInput" type="text" placeholder="新人格名称" />
+            <button id="createEntityButton" class="secondary" type="button">新建</button>
+          </div>
           <div id="personaBox" class="persona-empty">尚未导入背景设定</div>
-          <textarea id="backgroundInput" placeholder="粘贴背景设定，例如：名字：林夏。关系定位：长期陪伴型虚拟好友。性格：温柔、理性、少说教。"></textarea>
-          <button id="importPersonaButton" class="primary">导入并初始化</button>
+          <select id="importSourceType">
+            <option value="background_story">背景故事</option>
+            <option value="chat_log">聊天记录</option>
+            <option value="mixed">混合材料</option>
+          </select>
+          <textarea id="backgroundInput" placeholder="粘贴背景故事或聊天记录。系统会学习性格特征、口癖、习惯和互动方式。"></textarea>
+          <button id="importPersonaButton" class="primary">导入并学习</button>
         </section>
 
         <section class="panel">

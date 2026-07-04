@@ -7,9 +7,14 @@ from .schema import LONG_TERM_TYPES
 
 def memory_layers(state: dict[str, Any]) -> dict[str, Any]:
     personas = state.get("persona_versions", [])
+    entity_id = state.get("active_persona_entity_id") or "entity_default"
     active_persona = next((p for p in personas if p["id"] == state.get("active_persona_id")), None)
     session = state["sessions"][state["active_session_id"]]
-    memories = [m for m in state.get("memories", []) if m.get("status") == "active"]
+    memories = [
+        m
+        for m in state.get("memories", [])
+        if m.get("status") == "active" and (m.get("persona_entity_id") or "entity_default") == entity_id
+    ]
     return {
         "work": {"name": "工作记忆", "count": min(len(session.get("messages", [])), 24)},
         "summary": {"name": "会话摘要", "count": len(session.get("summaries", []))},

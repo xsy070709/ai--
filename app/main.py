@@ -23,6 +23,18 @@ class BackgroundRequest(BaseModel):
     confirm: bool = True
 
 
+class PersonaEntityRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+    activate: bool = True
+
+
+class PersonaImportRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=50000)
+    source_type: str = Field(default="mixed", pattern="^(background_story|chat_log|mixed)$")
+    persona_entity_id: str | None = None
+    confirm: bool = True
+
+
 settings = load_settings()
 store = create_store(settings)
 service = ChatService(store, DeepSeekGateway(settings))
@@ -52,9 +64,37 @@ async def api_chat(request: ChatRequest) -> dict[str, Any]:
     return await service.chat(request.message)
 
 
+@app.get("/api/persona-entities")
+def api_persona_entities() -> list[dict[str, Any]]:
+    return service.persona_entities()
+
+
+@app.post("/api/persona-entities")
+def api_create_persona_entity(request: PersonaEntityRequest) -> dict[str, Any]:
+    return service.create_persona_entity(request.name, activate=request.activate)
+
+
+@app.post("/api/persona-entities/{entity_id}/activate")
+def api_activate_persona_entity(entity_id: str) -> dict[str, Any]:
+    entity = service.switch_persona_entity(entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="persona entity not found")
+    return entity
+
+
 @app.post("/api/persona/import")
-def api_import_persona(request: BackgroundRequest) -> dict[str, Any]:
-    return service.import_background(request.text, request.confirm)
+async def api_import_persona(request: BackgroundRequest) -> dict[str, Any]:
+    return await service.import_persona_materials(request.text, source_type="background_story", confirm=request.confirm)
+
+
+@app.post("/api/persona/import-materials")
+async def api_import_persona_materials(request: PersonaImportRequest) -> dict[str, Any]:
+    return await service.import_persona_materials(
+        request.text,
+        source_type=request.source_type,
+        persona_entity_id=request.persona_entity_id,
+        confirm=request.confirm,
+    )
 
 
 @app.post("/api/persona/{persona_id}/confirm")

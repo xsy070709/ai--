@@ -6,6 +6,10 @@ const els = {
   modelName: document.querySelector("#modelName"),
   modelStatus: document.querySelector("#modelStatus"),
   personaBox: document.querySelector("#personaBox"),
+  entityList: document.querySelector("#entityList"),
+  entityNameInput: document.querySelector("#entityNameInput"),
+  createEntityButton: document.querySelector("#createEntityButton"),
+  importSourceType: document.querySelector("#importSourceType"),
   backgroundInput: document.querySelector("#backgroundInput"),
   importPersonaButton: document.querySelector("#importPersonaButton"),
   memoryLayers: document.querySelector("#memoryLayers"),
@@ -21,6 +25,7 @@ const els = {
 
 let devState = null;
 let activeDevTab = "memories";
+let activePersonaEntityId = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -79,6 +84,32 @@ function renderPersona(persona) {
   const identity = persona.identity || {};
   const traits = persona.personality?.stable_traits || [];
   els.personaBox.textContent = `${identity.name || "未命名"} · ${identity.relationship_to_user || "虚拟好友"}\n核心性格：${traits.join("、")}`;
+}
+
+function renderEntities(entities = []) {
+  els.entityList.innerHTML = "";
+  if (!entities.length) {
+    const empty = document.createElement("div");
+    empty.className = "entity-empty";
+    empty.textContent = "暂无人格实体";
+    els.entityList.appendChild(empty);
+    return;
+  }
+  for (const entity of entities) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `entity-item${entity.active ? " active" : ""}`;
+    button.dataset.entityId = entity.id;
+    const personaName = entity.persona?.identity?.name || entity.name || "未命名";
+    button.innerHTML = `<strong>${escapeHtml(personaName)}</strong><span>${escapeHtml(entity.message_count || 0)} 条消息</span>`;
+    button.addEventListener("click", async () => {
+      if (entity.active) return;
+      await api(`/api/persona-entities/${encodeURIComponent(entity.id)}/activate`, { method: "POST", body: "{}" });
+      await refresh();
+      if (els.devDrawer.classList.contains("open")) await refreshDev();
+    });
+    els.entityList.appendChild(button);
+  }
 }
 
 function escapeHtml(value) {
@@ -291,28 +322,50 @@ function closeDev() {
 
 async function refresh() {
   const [status, messages] = await Promise.all([api("/api/status"), api("/api/messages")]);
+  activePersonaEntityId = status.active_persona_entity_id;
   els.modelName.textContent = status.llm.model;
   els.modelStatus.textContent = status.llm.configured ? "已配置" : "本地降级";
+  renderEntities(status.persona_entities || []);
   renderPersona(status.persona);
   renderLayers(status.layers);
   renderMessages(messages);
 }
 
+els.createEntityButton.addEventListener("click", async () => {
+  const name = els.entityNameInput.value.trim();
+  els.createEntityButton.disabled = true;
+  try {
+    await api("/api/persona-entities", {
+      method: "POST",
+      body: JSON.stringify({ name: name || null, activate: true }),
+    });
+    els.entityNameInput.value = "";
+    await refresh();
+  } finally {
+    els.createEntityButton.disabled = false;
+  }
+});
+
 els.importPersonaButton.addEventListener("click", async () => {
   const text = els.backgroundInput.value.trim();
   if (!text) return;
   els.importPersonaButton.disabled = true;
-  els.importPersonaButton.textContent = "初始化中";
+  els.importPersonaButton.textContent = "学习中";
   try {
-    await api("/api/persona/import", {
+    await api("/api/persona/import-materials", {
       method: "POST",
-      body: JSON.stringify({ text, confirm: true }),
+      body: JSON.stringify({
+        text,
+        source_type: els.importSourceType.value,
+        persona_entity_id: activePersonaEntityId,
+        confirm: true,
+      }),
     });
     els.backgroundInput.value = "";
     await refresh();
   } finally {
     els.importPersonaButton.disabled = false;
-    els.importPersonaButton.textContent = "导入并初始化";
+    els.importPersonaButton.textContent = "导入并学习";
   }
 });
 

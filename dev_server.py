@@ -34,6 +34,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(service.messages())
         if path == "/api/memories":
             return self._send_json(service.memories())
+        if path == "/api/persona-entities":
+            return self._send_json(service.persona_entities())
         if path == "/api/memory-confirmations":
             return self._send_json(service.memory_confirmations())
         if path == "/api/debug":
@@ -55,8 +57,31 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             result = asyncio.run(service.chat(str(payload.get("message", ""))))
             return self._send_json(result)
+        if path == "/api/persona-entities":
+            result = service.create_persona_entity(payload.get("name"), activate=bool(payload.get("activate", True)))
+            return self._send_json(result)
+        if path.startswith("/api/persona-entities/") and path.endswith("/activate"):
+            entity_id = path.split("/")[-2]
+            result = service.switch_persona_entity(entity_id)
+            return self._send_json(result or {"detail": "persona entity not found"}, 200 if result else 404)
         if path == "/api/persona/import":
-            result = service.import_background(str(payload.get("text", "")), bool(payload.get("confirm", True)))
+            result = asyncio.run(
+                service.import_persona_materials(
+                    str(payload.get("text", "")),
+                    source_type="background_story",
+                    confirm=bool(payload.get("confirm", True)),
+                )
+            )
+            return self._send_json(result)
+        if path == "/api/persona/import-materials":
+            result = asyncio.run(
+                service.import_persona_materials(
+                    str(payload.get("text", "")),
+                    source_type=str(payload.get("source_type", "mixed")),
+                    persona_entity_id=payload.get("persona_entity_id"),
+                    confirm=bool(payload.get("confirm", True)),
+                )
+            )
             return self._send_json(result)
         if path.startswith("/api/persona/") and path.endswith("/confirm"):
             persona_id = path.split("/")[-2]
