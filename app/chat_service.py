@@ -145,10 +145,95 @@ class ChatService:
 
         return self.store.mutate(mutate)
 
+    def rename_persona_entity(self, entity_id: str, name: str) -> dict[str, Any] | None:
+        new_name = name.strip()
+        if not new_name:
+            return None
+
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            entity = self._entity_by_id(state, entity_id)
+            if entity is None:
+                return None
+            entity["name"] = new_name
+            entity["updated_at"] = now_iso()
+            session = state.get("sessions", {}).get(entity.get("active_session_id"))
+            if session is not None:
+                session["title"] = new_name
+                session["updated_at"] = now_iso()
+            return deepcopy(entity)
+
+        return self.store.mutate(mutate)
+
+    def delete_persona_entity(self, entity_id: str) -> bool:
+        def mutate(state: dict[str, Any]) -> bool:
+            entities = state.setdefault("persona_entities", [])
+            entity = self._entity_by_id(state, entity_id)
+            if entity is None:
+                return False
+            sessions = state.setdefault("sessions", {})
+            session_ids = [
+                session_id
+                for session_id, session in sessions.items()
+                if session.get("persona_entity_id") == entity_id or session_id == entity.get("active_session_id")
+            ]
+            for session_id in session_ids:
+                sessions.pop(session_id, None)
+            state["persona_versions"] = [
+                persona for persona in state.get("persona_versions", []) if not self._item_in_entity(persona, entity_id)
+            ]
+            state["memories"] = [
+                memory for memory in state.get("memories", []) if not self._item_in_entity(memory, entity_id)
+            ]
+            state["memory_confirmations"] = [
+                item
+                for item in state.get("memory_confirmations", [])
+                if not self._item_in_entity(item, entity_id)
+                and not self._item_in_entity(item.get("candidate", {}), entity_id)
+            ]
+            state["generation_logs"] = [
+                log for log in state.get("generation_logs", []) if not self._item_in_entity(log, entity_id)
+            ]
+            state["persona_entities"] = [item for item in entities if item.get("id") != entity_id]
+            if state["persona_entities"]:
+                if state.get("active_persona_entity_id") == entity_id or state.get("active_session_id") in session_ids:
+                    self._activate_entity_in_state(state, state["persona_entities"][0]["id"])
+            else:
+                replacement = self._new_entity_state("默认人格")
+                state["persona_entities"] = [replacement["entity"]]
+                sessions[replacement["session"]["id"]] = replacement["session"]
+                self._activate_entity_in_state(state, replacement["entity"]["id"])
+            return True
+
+        return self.store.mutate(mutate)
+
     def switch_persona_entity(self, entity_id: str) -> dict[str, Any] | None:
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
             entity = self._activate_entity_in_state(state, entity_id)
             return entity
+
+        return self.store.mutate(mutate)
+
+    def clear_current_chat(self) -> dict[str, Any]:
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            session = state["sessions"][state["active_session_id"]]
+            entity_id = self._session_entity_id(state, session.get("id", state["active_session_id"]))
+            removed_messages = len(session.get("messages", []))
+            removed_summaries = len(session.get("summaries", []))
+            session["messages"] = []
+            session["summaries"] = []
+            session["updated_at"] = now_iso()
+            old_logs = state.get("generation_logs", [])
+            state["generation_logs"] = [
+                log
+                for log in old_logs
+                if not (self._item_in_entity(log, entity_id) and log.get("purpose") == "chat")
+            ]
+            return {
+                "session_id": session.get("id"),
+                "removed_messages": removed_messages,
+                "removed_summaries": removed_summaries,
+                "removed_generation_logs": len(old_logs) - len(state["generation_logs"]),
+            }
 
         return self.store.mutate(mutate)
 
@@ -586,6 +671,30 @@ class ChatService:
 
     def _entity_by_id(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
         return next((entity for entity in state.get("persona_entities", []) if entity.get("id") == entity_id), None)
+
+    def _new_entity_state(self, name: str) -> dict[str, dict[str, Any]]:
+        entity_id = new_id("entity")
+        session_id = new_id("session")
+        now = now_iso()
+        entity = {
+            "id": entity_id,
+            "name": name.strip() or "未命名人格",
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+            "active_session_id": session_id,
+            "active_persona_id": None,
+        }
+        session = {
+            "id": session_id,
+            "persona_entity_id": entity_id,
+            "title": entity["name"],
+            "created_at": now,
+            "updated_at": now,
+            "messages": [],
+            "summaries": [],
+        }
+        return {"entity": entity, "session": session}
 
     def _activate_entity_in_state(self, state: dict[str, Any], entity_id: str) -> dict[str, Any] | None:
         entity = self._entity_by_id(state, entity_id)

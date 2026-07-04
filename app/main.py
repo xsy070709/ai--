@@ -28,6 +28,10 @@ class PersonaEntityRequest(BaseModel):
     activate: bool = True
 
 
+class PersonaEntityRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 class PersonaImportRequest(BaseModel):
     text: str = Field(min_length=1, max_length=50000)
     source_type: str = Field(default="mixed", pattern="^(background_story|chat_log|mixed)$")
@@ -59,6 +63,11 @@ def api_messages() -> list[dict[str, Any]]:
     return service.messages()
 
 
+@app.post("/api/messages/clear")
+def api_clear_messages() -> dict[str, Any]:
+    return service.clear_current_chat()
+
+
 @app.post("/api/chat")
 async def api_chat(request: ChatRequest) -> dict[str, Any]:
     return await service.chat(request.message)
@@ -74,12 +83,28 @@ def api_create_persona_entity(request: PersonaEntityRequest) -> dict[str, Any]:
     return service.create_persona_entity(request.name, activate=request.activate)
 
 
+@app.patch("/api/persona-entities/{entity_id}")
+def api_rename_persona_entity(entity_id: str, request: PersonaEntityRenameRequest) -> dict[str, Any]:
+    entity = service.rename_persona_entity(entity_id, request.name)
+    if not entity:
+        raise HTTPException(status_code=404, detail="persona entity not found")
+    return entity
+
+
 @app.post("/api/persona-entities/{entity_id}/activate")
 def api_activate_persona_entity(entity_id: str) -> dict[str, Any]:
     entity = service.switch_persona_entity(entity_id)
     if not entity:
         raise HTTPException(status_code=404, detail="persona entity not found")
     return entity
+
+
+@app.delete("/api/persona-entities/{entity_id}")
+def api_delete_persona_entity(entity_id: str) -> dict[str, bool]:
+    deleted = service.delete_persona_entity(entity_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="persona entity not found")
+    return {"deleted": True}
 
 
 @app.post("/api/persona/import")

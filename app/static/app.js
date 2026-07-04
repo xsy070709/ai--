@@ -9,6 +9,10 @@ const els = {
   entityList: document.querySelector("#entityList"),
   entityNameInput: document.querySelector("#entityNameInput"),
   createEntityButton: document.querySelector("#createEntityButton"),
+  renameEntityInput: document.querySelector("#renameEntityInput"),
+  renameEntityButton: document.querySelector("#renameEntityButton"),
+  clearChatButton: document.querySelector("#clearChatButton"),
+  deleteEntityButton: document.querySelector("#deleteEntityButton"),
   importSourceType: document.querySelector("#importSourceType"),
   backgroundInput: document.querySelector("#backgroundInput"),
   importPersonaButton: document.querySelector("#importPersonaButton"),
@@ -26,6 +30,7 @@ const els = {
 let devState = null;
 let activeDevTab = "memories";
 let activePersonaEntityId = null;
+let activePersonaEntityName = "";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -86,8 +91,19 @@ function renderPersona(persona) {
   els.personaBox.textContent = `${identity.name || "未命名"} · ${identity.relationship_to_user || "虚拟好友"}\n核心性格：${traits.join("、")}`;
 }
 
+async function refreshDevIfOpen() {
+  if (els.devDrawer.classList.contains("open")) await refreshDev();
+}
+
 function renderEntities(entities = []) {
   els.entityList.innerHTML = "";
+  const activeEntity = entities.find((entity) => entity.active);
+  activePersonaEntityName = activeEntity?.persona?.identity?.name || activeEntity?.name || "";
+  els.renameEntityInput.value = activePersonaEntityName;
+  const hasActiveEntity = Boolean(activeEntity);
+  els.renameEntityButton.disabled = !hasActiveEntity;
+  els.clearChatButton.disabled = !hasActiveEntity;
+  els.deleteEntityButton.disabled = !hasActiveEntity;
   if (!entities.length) {
     const empty = document.createElement("div");
     empty.className = "entity-empty";
@@ -106,7 +122,7 @@ function renderEntities(entities = []) {
       if (entity.active) return;
       await api(`/api/persona-entities/${encodeURIComponent(entity.id)}/activate`, { method: "POST", body: "{}" });
       await refresh();
-      if (els.devDrawer.classList.contains("open")) await refreshDev();
+      await refreshDevIfOpen();
     });
     els.entityList.appendChild(button);
   }
@@ -346,6 +362,51 @@ els.createEntityButton.addEventListener("click", async () => {
   }
 });
 
+els.renameEntityButton.addEventListener("click", async () => {
+  const name = els.renameEntityInput.value.trim();
+  if (!activePersonaEntityId || !name || name === activePersonaEntityName) return;
+  els.renameEntityButton.disabled = true;
+  try {
+    await api(`/api/persona-entities/${encodeURIComponent(activePersonaEntityId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+    await refresh();
+    await refreshDevIfOpen();
+  } finally {
+    els.renameEntityButton.disabled = false;
+  }
+});
+
+els.clearChatButton.addEventListener("click", async () => {
+  if (!activePersonaEntityId) return;
+  if (!window.confirm("清空当前好友的聊天记录？人格设定和长期记忆会保留。")) return;
+  els.clearChatButton.disabled = true;
+  try {
+    const result = await api("/api/messages/clear", { method: "POST", body: "{}" });
+    await refresh();
+    await refreshDevIfOpen();
+    els.debug.textContent = `已清空 ${result.removed_messages || 0} 条聊天记录`;
+  } finally {
+    els.clearChatButton.disabled = false;
+  }
+});
+
+els.deleteEntityButton.addEventListener("click", async () => {
+  if (!activePersonaEntityId) return;
+  const name = activePersonaEntityName || "当前好友";
+  if (!window.confirm(`删除好友「${name}」？该好友的聊天记录、人格设定和长期记忆都会删除。`)) return;
+  els.deleteEntityButton.disabled = true;
+  try {
+    await api(`/api/persona-entities/${encodeURIComponent(activePersonaEntityId)}`, { method: "DELETE" });
+    await refresh();
+    await refreshDevIfOpen();
+    els.debug.textContent = `已删除好友：${name}`;
+  } finally {
+    els.deleteEntityButton.disabled = false;
+  }
+});
+
 els.importPersonaButton.addEventListener("click", async () => {
   const text = els.backgroundInput.value.trim();
   if (!text) return;
@@ -384,7 +445,7 @@ els.composer.addEventListener("submit", async (event) => {
     });
     els.debug.textContent = `${result.llm.provider}/${result.llm.model} · ${result.llm.elapsed_ms}ms${result.degraded ? " · 降级" : ""}`;
     await refresh();
-    if (els.devDrawer.classList.contains("open")) await refreshDev();
+    await refreshDevIfOpen();
   } catch (error) {
     els.debug.textContent = `发送失败：${error.message}`;
   }
