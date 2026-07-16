@@ -65,11 +65,13 @@ MEMORY_INTENT_CLASSIFIER=llm
 STRUCTURED_PROVIDER=lmstudio
 LOCAL_LM_BASE_URL=http://127.0.0.1:7985/v1
 LOCAL_STRUCTURED_MODEL=google/gemma-4-12b-qat
+LOCAL_STRUCTURED_TIMEOUT_SECONDS=12
+LOCAL_STRUCTURED_MAX_RETRIES=0
 MEMORY_EXTRACTOR=lmstudio
 MEMORY_INTENT_CLASSIFIER=lmstudio
 ```
 
-这只会把结构化记忆抽取和意图分类切到 LM Studio 的 OpenAI-compatible API；主聊天回复仍按 DeepSeek 配置运行。LM Studio 不可用、返回 degraded 或 JSON 解析失败时，记忆模块会回退到规则抽取/规则意图。注意：直接启用 `MEMORY_EXTRACTOR=lmstudio` 或 `MEMORY_INTENT_CLASSIFIER=lmstudio` 会把本地模型调用串入当前聊天请求，适合实验，不适合作为“不影响前台响应”的默认配置。
+这只会把结构化记忆抽取和意图分类切到 LM Studio 的 OpenAI-compatible API；主聊天回复仍按 DeepSeek 配置运行。LM Studio 不可用、返回 degraded 或 JSON 解析失败时，记忆模块会回退到规则抽取/规则意图。本地结构化调用使用独立的 12 秒超时和 0 次重试，避免沿用远端默认值而把一次聊天阻塞到约 90 秒；可通过上述两个变量调整。注意：直接启用 `MEMORY_EXTRACTOR=lmstudio` 或 `MEMORY_INTENT_CLASSIFIER=lmstudio` 仍会把本地模型调用串入当前聊天请求，适合实验，不适合作为“不影响前台响应”的默认配置。
 
 不影响前台聊天的后台试点评估：
 

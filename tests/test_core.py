@@ -193,6 +193,8 @@ def test_lmstudio_structured_uses_openai_compatible_provider(tmp_path, monkeypat
     assert calls[0]["model"] == "google/gemma-4-12b-qat"
     assert calls[0]["response_format"]["type"] == "json_schema"
     assert calls[0]["response_format"]["json_schema"]["name"] == "memory_intent"
+    assert calls[0]["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+    assert calls[0]["timeout_seconds"] == 12.0
 
 
 def test_lmstudio_structured_degrades_on_invalid_json(tmp_path, monkeypatch) -> None:
@@ -218,6 +220,33 @@ def test_lmstudio_structured_degrades_on_invalid_json(tmp_path, monkeypatch) -> 
     assert result.degraded is True
     assert result.text == "{}"
     assert result.error
+
+
+def test_lmstudio_structured_uses_independent_retry_budget(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=30,
+        max_retries=5,
+        structured_provider="lmstudio",
+        local_structured_timeout_seconds=0.25,
+        local_structured_max_retries=1,
+    )
+    calls = []
+
+    async def failing_chat_completion(self, **kwargs):
+        calls.append(kwargs)
+        raise TimeoutError("forced local timeout")
+
+    monkeypatch.setattr("app.llm_gateway.OpenAICompatibleLocalClient.chat_completion", failing_chat_completion)
+
+    result = asyncio.run(DeepSeekGateway(settings).structured([{"role": "user", "content": "x"}], purpose="memory_extract"))
+
+    assert result.degraded is True
+    assert len(calls) == 2
+    assert {call["timeout_seconds"] for call in calls} == {0.25}
 
 
 def test_lmstudio_memory_settings_select_structured_adapters(tmp_path) -> None:

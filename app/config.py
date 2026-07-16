@@ -37,6 +37,8 @@ class Settings:
     local_lm_api_key: str = "lm-studio"
     local_structured_model: str = "google/gemma-4-12b-qat"
     local_embedding_model: str = "text-embedding-nomic-embed-text-v1.5"
+    local_structured_timeout_seconds: float = 12.0
+    local_structured_max_retries: int = 0
 
     @property
     def has_deepseek_key(self) -> bool:
@@ -63,6 +65,8 @@ def load_settings() -> Settings:
         local_lm_api_key=os.getenv("LOCAL_LM_API_KEY", "lm-studio"),
         local_structured_model=os.getenv("LOCAL_STRUCTURED_MODEL", "google/gemma-4-12b-qat"),
         local_embedding_model=os.getenv("LOCAL_EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5"),
+        local_structured_timeout_seconds=float(os.getenv("LOCAL_STRUCTURED_TIMEOUT_SECONDS", "12")),
+        local_structured_max_retries=int(os.getenv("LOCAL_STRUCTURED_MAX_RETRIES", "0")),
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
         force_local_llm=os.getenv("LLM_FORCE_LOCAL", "").lower() in {"1", "true", "yes"},

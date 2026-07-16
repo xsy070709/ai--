@@ -140,7 +140,7 @@ class DeepSeekGateway:
             return cached
 
         last_error: str | None = None
-        for _ in range(max(1, self.settings.max_retries + 1)):
+        for _ in range(max(1, self.settings.local_structured_max_retries + 1)):
             try:
                 data = await self._local().chat_completion(
                     messages=payload["messages"],
@@ -148,7 +148,7 @@ class DeepSeekGateway:
                     response_format=payload.get("response_format"),
                     max_tokens=int(payload["max_tokens"]),
                     temperature=float(payload["temperature"]),
-                    timeout_seconds=self.settings.timeout_seconds,
+                    timeout_seconds=max(0.1, self.settings.local_structured_timeout_seconds),
                 )
                 text = data["choices"][0]["message"]["content"].strip()
                 json.loads(text)

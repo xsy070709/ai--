@@ -70,11 +70,13 @@ def _schema_for_purpose(purpose: str) -> dict[str, Any]:
     if purpose == "memory_extract":
         return {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "memories": {
                     "type": "array",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
                             "type": {"type": "string"},
                             "content": {"type": "string"},
@@ -102,6 +104,7 @@ def _schema_for_purpose(purpose: str) -> dict[str, Any]:
         nullable_string = {"anyOf": [{"type": "string"}, {"type": "null"}]}
         return {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "has_completion_signal": {"type": "boolean"},
                 "completion_target": nullable_string,
