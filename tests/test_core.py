@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pytest
 
-from app.chat_service import ChatService
+from app.chat_service import ChatContextExpiredError, ChatService
 from app.config import Settings
 from app.llm_gateway import DeepSeekGateway, LLMResult
 from app.memory import (
@@ -1495,6 +1495,40 @@ def test_chat_service_pins_write_session_when_active_session_changes_during_awai
     assert manifest["active_session_changed"] is True
     assert manifest["state_revision_changed"] is True
     assert manifest["commit_state_revision"] > manifest["snapshot_state_revision"]
+
+
+def test_chat_service_does_not_write_reply_into_replacement_entity(tmp_path) -> None:
+    class EntityDeletingGateway:
+        def __init__(self, settings):
+            self.settings = settings
+            self.service = None
+
+        async def chat(self, messages, purpose="chat"):
+            entity_id = self.service.status()["active_persona_entity_id"]
+            assert self.service.delete_persona_entity(entity_id) is True
+            return LLMResult(text="不应写入新实体", provider="fake", model="fake", degraded=False, elapsed_ms=1)
+
+        def debug_requests(self):
+            return []
+
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4",
+        timeout_seconds=1,
+        max_retries=0,
+    )
+    gateway = EntityDeletingGateway(settings)
+    service = ChatService(JsonStore(settings), gateway)
+    gateway.service = service
+
+    with pytest.raises(ChatContextExpiredError):
+        asyncio.run(service.chat("这条消息属于即将删除的实体"))
+
+    assert service.messages() == []
+    assert service.memories() == []
+    assert service.store.snapshot()["generation_logs"] == []
 
 
 def test_chat_service_memories_uses_projection_interface(tmp_path) -> None:

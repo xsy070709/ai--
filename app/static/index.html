@@ -27,14 +27,36 @@
 
         <section class="panel">
           <div class="panel-title">人格</div>
+          <div id="entityList" class="entity-list"></div>
+          <div class="entity-create">
+            <input id="entityNameInput" type="text" placeholder="新人格名称" />
+            <button id="createEntityButton" class="secondary" type="button">新建</button>
+          </div>
+          <div class="entity-manage">
+            <input id="renameEntityInput" type="text" placeholder="当前好友名称" />
+            <button id="renameEntityButton" class="secondary" type="button">重命名</button>
+            <button id="clearChatButton" class="secondary" type="button">清空聊天</button>
+            <button id="deleteEntityButton" class="danger" type="button">删除好友</button>
+          </div>
           <div id="personaBox" class="persona-empty">尚未导入背景设定</div>
-          <textarea id="backgroundInput" placeholder="粘贴背景设定，例如：名字：林夏。关系定位：长期陪伴型虚拟好友。性格：温柔、理性、少说教。"></textarea>
-          <button id="importPersonaButton" class="primary">导入并初始化</button>
+          <select id="importSourceType">
+            <option value="background_story">背景故事</option>
+            <option value="chat_log">聊天记录</option>
+            <option value="mixed">混合材料</option>
+          </select>
+          <textarea id="backgroundInput" placeholder="粘贴背景故事或聊天记录。系统会学习性格特征、口癖、习惯和互动方式。"></textarea>
+          <button id="importPersonaButton" class="primary">导入并学习</button>
         </section>
 
         <section class="panel">
           <div class="panel-title">分层记忆</div>
           <div id="memoryLayers" class="memory-layers"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">近期事件</div>
+          <div id="eventList" class="event-list"></div>
+          <button id="addEventButton" class="secondary" type="button">+ 追加事件</button>
         </section>
       </aside>
 
@@ -80,6 +102,124 @@
       <section id="devContent" class="dev-content"></section>
     </aside>
     <div id="devBackdrop" class="dev-backdrop"></div>
+
+    <!-- Import Wizard Modal -->
+    <div id="importModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-container">
+        <header class="modal-header">
+          <h2>人格导入向导</h2>
+          <button id="importModalClose" class="icon-button" type="button" aria-label="关闭导入向导">&times;</button>
+        </header>
+        <div class="modal-body">
+
+          <!-- Step 1: Paste text -->
+          <section id="importStep1" class="iw-step">
+            <p class="iw-desc">粘贴背景故事或聊天记录。系统会分析性格特征、说话方式、习惯等。</p>
+            <textarea id="importTextarea" placeholder="可以是一段经历、一段人物描述，或者聊天记录。即使材料中有多个人物，系统也会根据当前好友名称来识别主体。&#10;&#10;例如：&#10;林夏从小跟着外婆长大，经历过很多，但始终保持温柔。她说话总是很短，先安慰你再分析问题。" rows="10"></textarea>
+            <div class="iw-options">
+              <label>材料类型：
+                <select id="importSourceTypeModal">
+                  <option value="background_story">背景故事</option>
+                  <option value="chat_log">聊天记录</option>
+                  <option value="mixed">混合材料</option>
+                </select>
+              </label>
+            </div>
+            <button id="importAnalyzeButton" class="primary" type="button">开始分析</button>
+          </section>
+
+          <!-- Step 2: Multi-turn chat + live profile -->
+          <section id="importStep2" class="iw-step iw-step-split" style="display:none">
+            <div class="iw-chat-area">
+              <div id="importChatMessages" class="iw-chat-messages"></div>
+              <form id="importChatForm" class="iw-chat-form">
+                <textarea id="importChatInput" placeholder="回复系统的问题，或直接告诉它哪里需要改..." rows="2"></textarea>
+                <button type="submit" class="send">发送</button>
+              </form>
+            </div>
+            <aside class="iw-profile-panel">
+              <h3>当前学习结果</h3>
+              <div id="importLiveProfile" class="iw-live-profile"></div>
+              <div class="iw-profile-actions">
+                <button id="importEditButton" class="secondary" type="button">手动编辑</button>
+                <button id="importConfirmFromStep2" class="primary" type="button">确认导入</button>
+              </div>
+            </aside>
+          </section>
+
+          <!-- Step 3: Editable profile form -->
+          <section id="importStep3" class="iw-step" style="display:none">
+            <h3>编辑人格设定</h3>
+            <div id="importEditableProfile" class="iw-editable-profile"></div>
+            <div class="iw-step3-actions">
+              <button id="importBackToStep2" class="secondary" type="button">&larr; 返回对话</button>
+              <button id="importConfirmFromStep3" class="primary" type="button">确认导入</button>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Event Modal -->
+    <div id="eventModal" class="modal-overlay" aria-hidden="true">
+      <div class="modal-container event-modal-container">
+        <header class="modal-header">
+          <h2>追加事件</h2>
+          <button id="eventModalClose" class="icon-button" type="button" aria-label="关闭">&times;</button>
+        </header>
+        <div class="modal-body">
+          <div class="iw-edit-field">
+            <label>事件内容</label>
+            <textarea id="eventContent" placeholder="描述发生了什么。例如：她上周丢了工作，正在重新找工作。" rows="3"></textarea>
+          </div>
+          <div class="iw-edit-field">
+            <label>事件类型</label>
+            <select id="eventType">
+              <option value="neutral">中性</option>
+              <option value="positive">正面</option>
+              <option value="negative">负面</option>
+              <option value="traumatic">创伤</option>
+            </select>
+          </div>
+          <div class="iw-edit-field">
+            <label>影响范围</label>
+            <select id="eventImpactScope">
+              <option value="temporary">暂时（有有效期）</option>
+              <option value="permanent">长期（持续影响）</option>
+              <option value="fading">逐渐消退</option>
+            </select>
+          </div>
+          <div class="iw-edit-field" id="eventExpiryField">
+            <label>持续时间（天）</label>
+            <input id="eventDurationDays" type="number" value="7" min="1" max="365" />
+          </div>
+          <div class="iw-edit-field">
+            <label>性格影响</label>
+            <div id="traitEffectsList"></div>
+            <button id="addTraitEffect" class="secondary" type="button">+ 添加影响</button>
+          </div>
+          <div class="iw-edit-field">
+            <label>
+              <input id="eventBecomesTopic" type="checkbox" checked />
+              可成为话题（角色会自然提及）
+            </label>
+            <input id="eventTopicWords" type="text" placeholder="触发关键词，逗号分隔。如：工作,上班,面试" style="margin-top:4px" />
+          </div>
+          <div class="iw-edit-field">
+            <label>
+              <input id="eventBecomesTaboo" type="checkbox" />
+              成为禁忌（角色会回避相关话题）
+            </label>
+            <input id="eventTabooWords" type="text" placeholder="禁忌关键词，逗号分隔。如：失业,裁员,被辞" style="margin-top:4px" />
+          </div>
+          <div class="iw-step3-actions">
+            <button id="eventSaveButton" class="primary" type="button">保存事件</button>
+            <button id="eventCancelButton" class="secondary" type="button">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>

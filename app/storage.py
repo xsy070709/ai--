@@ -23,15 +23,30 @@ def new_id(prefix: str) -> str:
 
 def default_state() -> dict[str, Any]:
     session_id = "default"
+    entity_id = "entity_default"
+    now = now_iso()
     return {
         "state_revision": 0,
+        "active_persona_entity_id": entity_id,
+        "persona_entities": [
+            {
+                "id": entity_id,
+                "name": "默认人格",
+                "status": "active",
+                "created_at": now,
+                "updated_at": now,
+                "active_session_id": session_id,
+                "active_persona_id": None,
+            }
+        ],
         "active_session_id": session_id,
         "sessions": {
             session_id: {
                 "id": session_id,
+                "persona_entity_id": entity_id,
                 "title": "长期聊天",
-                "created_at": now_iso(),
-                "updated_at": now_iso(),
+                "created_at": now,
+                "updated_at": now,
                 "messages": [],
                 "summaries": [],
             }
@@ -39,6 +54,7 @@ def default_state() -> dict[str, Any]:
         "persona_versions": [],
         "active_persona_id": None,
         "memories": [],
+        "persona_events": [],
         "generation_logs": [],
     }
 
@@ -105,10 +121,13 @@ class JsonStore:
         return _session_from_state(state, session_id)
 
     def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        state = self.snapshot()
+        entity_id = _active_entity_id(state)
         memories = [
             memory
-            for memory in self.snapshot().get("memories", [])
+            for memory in state.get("memories", [])
             if memory.get("status") == "active" and query in memory.get("content", "")
+            and _belongs_to_entity(memory, entity_id)
         ]
         memories.sort(
             key=lambda memory: (memory.get("importance", 0), memory.get("updated_at", "")),
@@ -131,8 +150,10 @@ class JsonStore:
 
         query_vector = semantic_vector(query)
         scored = []
-        for memory in self.snapshot().get("memories", []):
-            if memory.get("status") != "active":
+        state = self.snapshot()
+        entity_id = _active_entity_id(state)
+        for memory in state.get("memories", []):
+            if memory.get("status") != "active" or not _belongs_to_entity(memory, entity_id):
                 continue
             vector = semantic_vector(memory.get("content", ""))
             scored.append((cosine_similarity(query_vector, vector), memory))
@@ -140,7 +161,9 @@ class JsonStore:
         return [memory for score, memory in scored[:limit] if score > 0]
 
     def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
-        memories = self.snapshot().get("memories", [])
+        state = self.snapshot()
+        entity_id = _active_entity_id(state)
+        memories = [memory for memory in state.get("memories", []) if _belongs_to_entity(memory, entity_id)]
         if status is None:
             return memories
         return [memory for memory in memories if memory.get("status") == status]
@@ -188,6 +211,7 @@ class SqliteStore:
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
+                    persona_entity_id TEXT,
                     title TEXT,
                     created_at TEXT,
                     updated_at TEXT,
@@ -201,6 +225,7 @@ class SqliteStore:
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    persona_entity_id TEXT,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     created_at TEXT,
@@ -213,6 +238,7 @@ class SqliteStore:
                 """
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY,
+                    persona_entity_id TEXT,
                     type TEXT,
                     content TEXT NOT NULL,
                     importance REAL,
@@ -255,6 +281,7 @@ class SqliteStore:
                 """
                 CREATE TABLE IF NOT EXISTS persona_versions (
                     id TEXT PRIMARY KEY,
+                    persona_entity_id TEXT,
                     status TEXT,
                     version INTEGER,
                     full_json TEXT NOT NULL
@@ -265,6 +292,7 @@ class SqliteStore:
                 """
                 CREATE TABLE IF NOT EXISTS generation_logs (
                     id TEXT PRIMARY KEY,
+                    persona_entity_id TEXT,
                     created_at TEXT,
                     purpose TEXT,
                     provider TEXT,
@@ -278,6 +306,11 @@ class SqliteStore:
                 )
                 """
             )
+            _ensure_column(db, "sessions", "persona_entity_id", "TEXT")
+            _ensure_column(db, "messages", "persona_entity_id", "TEXT")
+            _ensure_column(db, "memories", "persona_entity_id", "TEXT")
+            _ensure_column(db, "persona_versions", "persona_entity_id", "TEXT")
+            _ensure_column(db, "generation_logs", "persona_entity_id", "TEXT")
 
     def _read_state(self) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -317,6 +350,7 @@ class SqliteStore:
         return _session_from_state(state, session_id)
 
     def search_memories(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        entity_id = _active_entity_id(self.snapshot())
         with self._connect() as db:
             rows = []
             fts_query = _fts_query(query)
@@ -326,22 +360,22 @@ class SqliteStore:
                     SELECT memories.full_json
                     FROM memory_fts
                     JOIN memories ON memories.id = memory_fts.memory_id
-                    WHERE memory_fts MATCH ? AND memories.status = 'active'
+                    WHERE memory_fts MATCH ? AND memories.status = 'active' AND memories.persona_entity_id = ?
                     ORDER BY bm25(memory_fts)
                     LIMIT ?
                     """,
-                    (fts_query, limit),
+                    (fts_query, entity_id, limit),
                 ).fetchall()
             if not rows:
                 rows = db.execute(
                     """
                     SELECT full_json
                     FROM memories
-                    WHERE status = 'active' AND content LIKE ? ESCAPE '\\'
+                    WHERE status = 'active' AND persona_entity_id = ? AND content LIKE ? ESCAPE '\\'
                     ORDER BY importance DESC, updated_at DESC
                     LIMIT ?
                     """,
-                    (_like_contains_pattern(query), limit),
+                    (entity_id, _like_contains_pattern(query), limit),
                 ).fetchall()
         memories = [json.loads(row["full_json"]) for row in rows]
         if len(memories) >= limit:
@@ -361,17 +395,18 @@ class SqliteStore:
 
         query_vector = semantic_vector(query)
         candidate_limit = max(limit * 16, 256)
+        entity_id = _active_entity_id(self.snapshot())
         with self._connect() as db:
             rows = db.execute(
                 """
                 SELECT memories.full_json, memory_embeddings.vector_json
                 FROM memory_embeddings
                 JOIN memories ON memories.id = memory_embeddings.memory_id
-                WHERE memories.status = 'active'
+                WHERE memories.status = 'active' AND memories.persona_entity_id = ?
                 ORDER BY memories.importance DESC, memories.updated_at DESC
                 LIMIT ?
                 """,
-                (candidate_limit,),
+                (entity_id, candidate_limit),
             ).fetchall()
         scored = []
         for row in rows:
@@ -381,24 +416,27 @@ class SqliteStore:
         return [memory for score, memory in scored[:limit] if score > 0]
 
     def list_memories(self, status: str | None = None) -> list[dict[str, Any]]:
+        entity_id = _active_entity_id(self.snapshot())
         with self._connect() as db:
             if status is None:
                 rows = db.execute(
                     """
                     SELECT full_json
                     FROM memories
+                    WHERE persona_entity_id = ?
                     ORDER BY updated_at DESC, created_at DESC
-                    """
+                    """,
+                    (entity_id,),
                 ).fetchall()
             else:
                 rows = db.execute(
                     """
                     SELECT full_json
                     FROM memories
-                    WHERE status = ?
+                    WHERE status = ? AND persona_entity_id = ?
                     ORDER BY updated_at DESC, created_at DESC
                     """,
-                    (status,),
+                    (status, entity_id),
                 ).fetchall()
         return [json.loads(row["full_json"]) for row in rows]
 
@@ -428,6 +466,34 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("memories", [])
     normalized.setdefault("generation_logs", [])
     normalized.setdefault("memory_confirmations", [])
+    normalized.setdefault("persona_entities", [])
+    if not normalized["persona_entities"]:
+        entity = deepcopy(default_state()["persona_entities"][0])
+        entity["active_session_id"] = normalized.get("active_session_id", "default")
+        entity["active_persona_id"] = normalized.get("active_persona_id")
+        normalized["persona_entities"] = [entity]
+    if not normalized.get("active_persona_entity_id"):
+        normalized["active_persona_entity_id"] = normalized["persona_entities"][0]["id"]
+
+    active_entity_id = _active_entity_id(normalized)
+    active_entity = _active_entity(normalized)
+    if active_entity is not None:
+        normalized["active_session_id"] = active_entity.get("active_session_id") or normalized.get("active_session_id", "default")
+        normalized["active_persona_id"] = active_entity.get("active_persona_id")
+    for session in normalized.get("sessions", {}).values():
+        if session:
+            session.setdefault("persona_entity_id", active_entity_id)
+    for persona in normalized.get("persona_versions", []):
+        persona.setdefault("persona_entity_id", active_entity_id)
+    for memory in normalized.get("memories", []):
+        memory.setdefault("persona_entity_id", active_entity_id)
+    for log in normalized.get("generation_logs", []):
+        log.setdefault("persona_entity_id", active_entity_id)
+    for item in normalized.get("memory_confirmations", []):
+        candidate = item.get("candidate")
+        if isinstance(candidate, dict):
+            candidate.setdefault("persona_entity_id", active_entity_id)
+        item.setdefault("persona_entity_id", candidate.get("persona_entity_id", active_entity_id) if isinstance(candidate, dict) else active_entity_id)
     return normalized
 
 
@@ -448,6 +514,20 @@ def _session_from_state(state: dict[str, Any], session_id: str) -> dict[str, Any
     if session is not None:
         return session
     return sessions[state["active_session_id"]]
+
+
+def _active_entity_id(state: dict[str, Any]) -> str:
+    entities = state.get("persona_entities") or []
+    return state.get("active_persona_entity_id") or (entities[0].get("id") if entities else "entity_default")
+
+
+def _active_entity(state: dict[str, Any]) -> dict[str, Any] | None:
+    entity_id = _active_entity_id(state)
+    return next((entity for entity in state.get("persona_entities", []) if entity.get("id") == entity_id), None)
+
+
+def _belongs_to_entity(item: dict[str, Any], entity_id: str) -> bool:
+    return (item.get("persona_entity_id") or "entity_default") == entity_id
 
 
 def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> None:
@@ -475,15 +555,17 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         session_id = session.get("id")
         if session_id is None:
             continue
+        session_entity_id = session.get("persona_entity_id") or _active_entity_id(state)
         messages = session.get("messages", [])
         summaries = session.get("summaries", [])
         db.execute(
             """
-            INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, message_count, summary_count)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO sessions (id, persona_entity_id, title, created_at, updated_at, message_count, summary_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
+                session_entity_id,
                 session.get("title"),
                 session.get("created_at"),
                 session.get("updated_at"),
@@ -497,12 +579,13 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
                 continue
             db.execute(
                 """
-                INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at, meta_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO messages (id, session_id, persona_entity_id, role, content, created_at, meta_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
                     session_id,
+                    session_entity_id,
                     message.get("role"),
                     message.get("content", ""),
                     message.get("created_at"),
@@ -514,19 +597,21 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         memory_id = memory.get("id")
         if memory_id is None:
             continue
+        memory_entity_id = memory.get("persona_entity_id") or _active_entity_id(state)
         full_json = json.dumps(memory, ensure_ascii=False)
         existing = db.execute("SELECT full_json FROM memories WHERE id = ?", (memory_id,)).fetchone()
         memory_changed = not existing or existing["full_json"] != full_json
         db.execute(
             """
             INSERT OR REPLACE INTO memories (
-                id, type, content, importance, salience, confidence, status, open,
+                id, persona_entity_id, type, content, importance, salience, confidence, status, open,
                 created_at, updated_at, last_used_at, tags_json, evidence_json, full_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 memory_id,
+                memory_entity_id,
                 memory.get("type"),
                 memory.get("content", ""),
                 memory.get("importance"),
@@ -566,8 +651,14 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         if persona_id is None:
             continue
         db.execute(
-            "INSERT OR REPLACE INTO persona_versions (id, status, version, full_json) VALUES (?, ?, ?, ?)",
-            (persona_id, persona.get("status"), persona.get("version"), json.dumps(persona, ensure_ascii=False)),
+            "INSERT OR REPLACE INTO persona_versions (id, persona_entity_id, status, version, full_json) VALUES (?, ?, ?, ?, ?)",
+            (
+                persona_id,
+                persona.get("persona_entity_id") or _active_entity_id(state),
+                persona.get("status"),
+                persona.get("version"),
+                json.dumps(persona, ensure_ascii=False),
+            ),
         )
 
     for log in state.get("generation_logs", []):
@@ -577,13 +668,14 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
         db.execute(
             """
             INSERT OR REPLACE INTO generation_logs (
-                id, created_at, purpose, provider, model, degraded, elapsed_ms,
+                id, persona_entity_id, created_at, purpose, provider, model, degraded, elapsed_ms,
                 error, prompt_manifest_json, feedback_signals_json, full_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 log_id,
+                log.get("persona_entity_id") or _active_entity_id(state),
                 log.get("created_at"),
                 log.get("purpose"),
                 log.get("provider"),
@@ -596,6 +688,12 @@ def _sync_projection_tables(db: sqlite3.Connection, state: dict[str, Any]) -> No
                 json.dumps(log, ensure_ascii=False),
             ),
         )
+
+
+def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def _delete_missing_projection_rows(db: sqlite3.Connection, table: str, key: str, ids: set[str]) -> None:

@@ -34,6 +34,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(service.messages())
         if path == "/api/memories":
             return self._send_json(service.memories())
+        if path == "/api/persona-entities":
+            return self._send_json(service.persona_entities())
         if path == "/api/memory-confirmations":
             return self._send_json(service.memory_confirmations())
         if path == "/api/debug":
@@ -55,8 +57,37 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             result = asyncio.run(service.chat(str(payload.get("message", ""))))
             return self._send_json(result)
+        if path == "/api/messages/clear":
+            return self._send_json(service.clear_current_chat())
+        if path == "/api/persona-entities":
+            result = service.create_persona_entity(payload.get("name"), activate=bool(payload.get("activate", True)))
+            return self._send_json(result)
+        if path.startswith("/api/persona-entities/") and path.endswith("/rename"):
+            entity_id = path.split("/")[-2]
+            result = service.rename_persona_entity(entity_id, str(payload.get("name", "")))
+            return self._send_json(result or {"detail": "persona entity not found"}, 200 if result else 404)
+        if path.startswith("/api/persona-entities/") and path.endswith("/activate"):
+            entity_id = path.split("/")[-2]
+            result = service.switch_persona_entity(entity_id)
+            return self._send_json(result or {"detail": "persona entity not found"}, 200 if result else 404)
         if path == "/api/persona/import":
-            result = service.import_background(str(payload.get("text", "")), bool(payload.get("confirm", True)))
+            result = asyncio.run(
+                service.import_persona_materials(
+                    str(payload.get("text", "")),
+                    source_type="background_story",
+                    confirm=bool(payload.get("confirm", True)),
+                )
+            )
+            return self._send_json(result)
+        if path == "/api/persona/import-materials":
+            result = asyncio.run(
+                service.import_persona_materials(
+                    str(payload.get("text", "")),
+                    source_type=str(payload.get("source_type", "mixed")),
+                    persona_entity_id=payload.get("persona_entity_id"),
+                    confirm=bool(payload.get("confirm", True)),
+                )
+            )
             return self._send_json(result)
         if path.startswith("/api/persona/") and path.endswith("/confirm"):
             persona_id = path.split("/")[-2]
@@ -74,8 +105,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(service.tidy_memory_store())
         self._send_json({"detail": "not found"}, 404)
 
+    def do_PATCH(self) -> None:  # noqa: N802 - stdlib hook
+        path = urlparse(self.path).path
+        payload = self._read_json()
+        if path.startswith("/api/persona-entities/"):
+            entity_id = path.rsplit("/", 1)[-1]
+            result = service.rename_persona_entity(entity_id, str(payload.get("name", "")))
+            return self._send_json(result or {"detail": "persona entity not found"}, 200 if result else 404)
+        self._send_json({"detail": "not found"}, 404)
+
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib hook
         path = urlparse(self.path).path
+        if path.startswith("/api/persona-entities/"):
+            entity_id = path.rsplit("/", 1)[-1]
+            deleted = service.delete_persona_entity(entity_id)
+            return self._send_json({"deleted": deleted}, 200 if deleted else 404)
         if path.startswith("/api/memories/"):
             return self._send_json({"deleted": service.delete_memory(path.rsplit("/", 1)[-1])})
         self._send_json({"detail": "not found"}, 404)
