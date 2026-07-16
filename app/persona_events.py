@@ -293,7 +293,7 @@ def event_to_memory(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("resolution_note"):
         content = f"{content}（结果：{event['resolution_note']}）"
 
-    return make_memory(
+    memory = make_memory(
         memory_type="shared_experience",
         content=f"她经历过：{content}",
         confidence=0.9,
@@ -304,6 +304,9 @@ def event_to_memory(event: dict[str, Any]) -> dict[str, Any]:
         stability="high",
         sensitivity_level="medium" if event.get("becomes_taboo") else "low",
     )
+    memory["source_event_id"] = event["id"]
+    memory["persona_entity_id"] = event["persona_entity_id"]
+    return memory
 
 
 # ---------------------------------------------------------------------------

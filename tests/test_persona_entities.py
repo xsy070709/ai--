@@ -4,9 +4,10 @@ import asyncio
 
 import pytest
 
-from app.chat_service import ChatService
+from app.chat_service import ChatService, PersonaEntityNotFoundError
 from app.config import Settings
 from app.llm_gateway import DeepSeekGateway, LLMResult
+from app.memory.schema import make_memory
 from app.storage import JsonStore
 
 
@@ -174,6 +175,7 @@ def test_delete_persona_entity_removes_scoped_data_and_selects_replacement(tmp_p
     second = service.create_persona_entity("周白", activate=True)
     asyncio.run(service.import_persona_materials("名字：周白。口癖：行吧。性格：直接、冷幽默。"))
     asyncio.run(service.chat("记住我不喜欢太热闹"))
+    service.create_persona_event(content="周白刚换了工作", event_type="positive")
 
     assert service.delete_persona_entity(second["id"]) is True
     state = service.store.snapshot()
@@ -183,6 +185,7 @@ def test_delete_persona_entity_removes_scoped_data_and_selects_replacement(tmp_p
     assert all(persona.get("persona_entity_id") != second["id"] for persona in state["persona_versions"])
     assert all(memory.get("persona_entity_id") != second["id"] for memory in state["memories"])
     assert all(log.get("persona_entity_id") != second["id"] for log in state["generation_logs"])
+    assert all(event.get("persona_entity_id") != second["id"] for event in state["persona_events"])
     assert state["active_session_id"] == first_session_id
     assert first_memory_ids <= {memory["id"] for memory in service.memories()}
 
@@ -193,6 +196,34 @@ def test_delete_persona_entity_removes_scoped_data_and_selects_replacement(tmp_p
     assert service.messages() == []
     assert service.memories() == []
     assert service.delete_persona_entity("missing") is False
+
+
+def test_memory_mutations_cannot_cross_entity_boundary(tmp_path) -> None:
+    service = make_service(tmp_path)
+    asyncio.run(service.chat("记住我喜欢安静一点的回复"))
+    first_entity_id = service.status()["active_persona_entity_id"]
+    first_memory_id = service.memories()[0]["id"]
+    candidate = make_memory("boundary", "不要提旧事", 0.9, False, "不要提旧事")
+    candidate["persona_entity_id"] = first_entity_id
+    confirmation = {
+        "id": "confirm_first_entity",
+        "persona_entity_id": first_entity_id,
+        "status": "pending",
+        "candidate": candidate,
+    }
+    service.store.mutate(
+        lambda state: state.setdefault("memory_confirmations", []).append(confirmation)
+    )
+
+    service.create_persona_entity("周白", activate=True)
+    assert service.delete_memory(first_memory_id) is False
+    assert service.confirm_memory_candidate(confirmation["id"], True) is None
+
+    service.switch_persona_entity(first_entity_id)
+    accepted = service.confirm_memory_candidate(confirmation["id"], True)
+    assert accepted is not None
+    assert accepted["status"] == "accepted"
+    assert service.delete_memory(first_memory_id) is True
 
 
 # ── Import Wizard Session Tests ──────────────────────────────────────
@@ -379,6 +410,26 @@ def test_import_session_not_found(tmp_path) -> None:
 
     assert service.delete_import_session("nonexistent") is False
     assert service.get_import_session_state("nonexistent") is None
+
+
+def test_import_session_rejects_missing_or_deleted_entity(tmp_path) -> None:
+    service = make_import_service(tmp_path)
+
+    with pytest.raises(PersonaEntityNotFoundError):
+        asyncio.run(
+            service.start_import_session(
+                "林夏：温柔。",
+                source_type="background_story",
+                persona_entity_id="missing",
+            )
+        )
+
+    entity_id = service.status()["active_persona_entity_id"]
+    started = asyncio.run(service.start_import_session("林夏：温柔。", source_type="background_story"))
+    assert service.delete_persona_entity(entity_id) is True
+    with pytest.raises(PersonaEntityNotFoundError):
+        asyncio.run(service.confirm_import_session(started["session_id"], started["current_profile"]))
+    assert service.get_import_session_state(started["session_id"]) is not None
 
 
 def test_import_session_delete(tmp_path) -> None:
