@@ -123,12 +123,20 @@ def _build_messages(user_text: str, assistant_text: str, context: dict[str, Any]
 
 def _payload_to_memories(payload: dict[str, Any], evidence_text: str) -> list[dict[str, Any]]:
     memories = []
-    for item in payload.get("memories", []):
+    items = payload.get("memories", [])
+    if not isinstance(items, list):
+        return memories
+    for item in items:
+        if not isinstance(item, dict):
+            continue
         memory_type = _normalized_memory_type(item.get("type"))
         content = str(item.get("content", "")).strip()
         if memory_type is None or not content:
             continue
-        confirmed = bool(item.get("confirmed", False))
+        # Confirmation is a user action, not a model prediction. Derive it from
+        # the source message so malformed or over-eager structured output cannot
+        # bypass the confirmation queue.
+        confirmed = _user_explicitly_confirms(memory_type, evidence_text)
         confidence = _normalized_confidence(item.get("confidence", 0.6), confirmed=confirmed)
         memories.append(
             make_memory(
@@ -165,13 +173,25 @@ def _normalized_confidence(value: Any, *, confirmed: bool) -> float:
 
 
 def _normalized_open_item(memory_type: str, value: Any, content: str) -> bool:
+    enabled = value is True
     if memory_type == "goal":
-        return bool(value)
+        return enabled
     if memory_type == "shared_experience" and any(marker in content for marker in ("下次", "继续", "约定")):
-        return bool(value)
+        return enabled
     return False
 
 
 def _normalized_choice(value: Any, allowed: set[str], default: str) -> str:
     text = str(value or "").strip().lower()
     return text if text in allowed else default
+
+
+def _user_explicitly_confirms(memory_type: str, evidence_text: str) -> bool:
+    text = evidence_text.strip()
+    if any(marker in text for marker in ("记住", "帮我记住", "你要记得")):
+        return True
+    if memory_type == "response_rule" and any(marker in text for marker in ("以后", "下次", "和我聊天时")):
+        return True
+    if memory_type == "boundary" and any(marker in text for marker in ("雷区", "不要提", "别提", "不想聊")):
+        return True
+    return False

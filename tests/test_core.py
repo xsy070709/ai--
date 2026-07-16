@@ -658,9 +658,10 @@ def test_structured_llm_intent_classifier_maps_json() -> None:
 
     assert intent["classifier"] == "structured_llm_intent"
     assert intent["completion_target"] == "面试"
-    assert intent["correction_action"] == "correct"
-    assert intent["correction_query"] == "旧面试时间"
-    assert intent["correction_new_value"] == "周五下午面试"
+    assert intent["has_correction_intent"] is False
+    assert intent["correction_action"] is None
+    assert intent["correction_query"] is None
+    assert intent["correction_new_value"] is None
     assert intent["topics"] == ["面试"]
     assert "当前日期" in gateway.calls[-1]["messages"][1]["content"]
 
@@ -732,6 +733,35 @@ def test_structured_llm_intent_guard_keeps_rule_correction_when_llm_misses() -> 
     assert intent["correction_new_value"] == "周五下午面试"
 
 
+def test_structured_llm_intent_guard_rejects_model_only_correction() -> None:
+    intent = asyncio.run(StructuredLLMIntentClassifier(FakeIntentGateway()).classify_async("面试还在准备"))
+
+    assert intent["has_correction_intent"] is False
+    assert intent["correction_action"] is None
+    assert intent["correction_query"] is None
+    assert intent["correction_new_value"] is None
+
+
+def test_structured_llm_intent_does_not_coerce_strings_or_scalar_lists() -> None:
+    class MalformedIntentGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"has_completion_signal":"false","completion_target":"材料","has_correction_intent":"true","correction_action":"delete","correction_query":"材料","correction_new_value":null,"primary_emotion":"平稳","secondary_emotion":null,"valence":"neutral","is_casual_chat":"false","has_followup_invitation":"true","topics":"材料","unfinished_items":"交材料","information_density":1.0}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    intent = asyncio.run(StructuredLLMIntentClassifier(MalformedIntentGateway()).classify_async("材料还在准备"))
+
+    assert intent["has_completion_signal"] is False
+    assert intent["has_correction_intent"] is False
+    assert intent["has_followup_invitation"] is False
+    assert intent["topics"] == ["材料"]
+    assert intent["unfinished_items"] == []
+
+
 def test_structured_llm_extractor_normalizes_overconfident_memory() -> None:
     class OverconfidentMemoryGateway(FakeStructuredGateway):
         async def structured(self, messages, purpose="structured"):
@@ -753,6 +783,26 @@ def test_structured_llm_extractor_normalizes_overconfident_memory() -> None:
     assert by_type["response_rule"]["sensitivity_level"] == "low"
     assert by_type["goal"]["confidence"] == 0.92
     assert by_type["goal"]["open"] is True
+
+
+def test_structured_llm_extractor_derives_confirmation_from_user_text() -> None:
+    class ConfirmationGateway(FakeStructuredGateway):
+        async def structured(self, messages, purpose="structured"):
+            return LLMResult(
+                text='{"memories":[{"type":"preference","content":"用户喜欢安静回复","confidence":0.9,"confirmed":true,"open":"true","stability":"high","sensitivity_level":"low"}]}',
+                provider="fake",
+                model="fake",
+                degraded=False,
+                elapsed_ms=1,
+            )
+
+    extractor = StructuredLLMMemoryExtractor(ConfirmationGateway())
+    inferred = asyncio.run(extractor.extract_async("我喜欢安静回复"))
+    explicit = asyncio.run(extractor.extract_async("记住我喜欢安静回复"))
+
+    assert inferred[0]["is_user_confirmed"] is False
+    assert inferred[0]["open"] is False
+    assert explicit[0]["is_user_confirmed"] is True
 
 
 def test_quality_review_queues_sensitive_boundary() -> None:

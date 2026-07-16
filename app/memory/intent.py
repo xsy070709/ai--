@@ -181,19 +181,19 @@ def _build_messages(user_text: str, context: dict[str, Any] | None) -> list[dict
 def _normalize_intent(payload: dict[str, Any]) -> dict[str, Any]:
     correction_action = _normalized_correction_action(payload.get("correction_action"))
     return {
-        "has_completion_signal": bool(payload.get("has_completion_signal", False)),
+        "has_completion_signal": payload.get("has_completion_signal") is True,
         "completion_target": _optional_string(payload.get("completion_target")),
-        "has_correction_intent": bool(payload.get("has_correction_intent", False)) and correction_action is not None,
+        "has_correction_intent": payload.get("has_correction_intent") is True and correction_action is not None,
         "correction_action": correction_action,
         "correction_query": _optional_string(payload.get("correction_query")),
         "correction_new_value": _optional_string(payload.get("correction_new_value")),
         "primary_emotion": str(payload.get("primary_emotion", "平稳")),
         "secondary_emotion": _optional_string(payload.get("secondary_emotion")),
         "valence": str(payload.get("valence", "neutral")),
-        "is_casual_chat": bool(payload.get("is_casual_chat", False)),
-        "has_followup_invitation": bool(payload.get("has_followup_invitation", False)),
-        "topics": [str(item) for item in payload.get("topics", [])],
-        "unfinished_items": [str(item) for item in payload.get("unfinished_items", [])],
+        "is_casual_chat": payload.get("is_casual_chat") is True,
+        "has_followup_invitation": payload.get("has_followup_invitation") is True,
+        "topics": _string_list(payload.get("topics")),
+        "unfinished_items": _string_list(payload.get("unfinished_items")),
         "information_density": float(payload.get("information_density", 0.0)),
     }
 
@@ -217,8 +217,6 @@ def _guard_structured_intent(intent: dict[str, Any], rule_intent: dict[str, Any]
         guarded["correction_action"] = guarded.get("correction_action") or rule_intent.get("correction_action")
         guarded["correction_query"] = guarded.get("correction_query") or rule_intent.get("correction_query")
         guarded["correction_new_value"] = guarded.get("correction_new_value") or rule_intent.get("correction_new_value")
-    elif guarded.get("correction_action") in {"delete", "correct"}:
-        guarded["has_correction_intent"] = True
     else:
         guarded["has_correction_intent"] = False
         guarded["correction_action"] = None
@@ -252,3 +250,9 @@ def _optional_string(value: Any) -> str | None:
     if text in {"无", "没有", "无此项", "未指明"}:
         return None
     return text
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := _optional_string(item)) is not None]
