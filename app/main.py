@@ -344,9 +344,4 @@ def api_tidy_memories() -> dict[str, Any]:
 
 @app.get("/api/llm/health")
 def api_llm_health() -> dict[str, Any]:
-    return {
-        "chat_provider": "deepseek",
-        "chat_model": settings.deepseek_chat_model,
-        "chat_available": settings.has_deepseek_key,
-        "fallback_available": True,
-    }
+    return service.gateway.health_snapshot()

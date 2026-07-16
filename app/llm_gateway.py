@@ -32,11 +32,13 @@ class DeepSeekGateway:
 
     async def chat(self, messages: list[dict[str, str]], purpose: str = "chat") -> LLMResult:
         started = time.perf_counter()
+        payload = self._payload(messages, purpose=purpose, structured=False)
         if not self.settings.has_deepseek_key:
-            return self._fallback(messages, started, "missing DEEPSEEK_API_KEY")
+            result = self._fallback(messages, started, "missing DEEPSEEK_API_KEY")
+            self._record_request(purpose, payload, result)
+            return result
 
         url = f"{self.settings.deepseek_api_base_url}/chat/completions"
-        payload = self._payload(messages, purpose=purpose, structured=False)
         headers = {"Authorization": f"Bearer {self.settings.deepseek_api_key}"}
 
         last_error: str | None = None
@@ -69,8 +71,9 @@ class DeepSeekGateway:
             return await self._local_structured(messages, purpose=purpose)
 
         started = time.perf_counter()
+        payload = self._payload(messages, purpose=purpose, structured=True)
         if not self.settings.has_deepseek_key:
-            return LLMResult(
+            result = LLMResult(
                 text="{}",
                 provider="local",
                 model="fallback",
@@ -79,9 +82,10 @@ class DeepSeekGateway:
                 error="missing DEEPSEEK_API_KEY",
                 usage={"estimated_prompt_chars": sum(len(m.get("content", "")) for m in messages)},
             )
+            self._record_request(purpose, payload, result)
+            return result
 
         url = f"{self.settings.deepseek_api_base_url}/chat/completions"
-        payload = self._payload(messages, purpose=purpose, structured=True)
         cache_key = self._structured_cache_key(payload)
         if cache_key in self._structured_cache:
             cached = deepcopy(self._structured_cache[cache_key])
@@ -280,6 +284,89 @@ class DeepSeekGateway:
 
     def debug_requests(self) -> list[dict[str, Any]]:
         return deepcopy(self._request_log)
+
+    def health_snapshot(self) -> dict[str, Any]:
+        chat_latest = self._latest_request("chat")
+        return {
+            # Keep the original flat fields for existing callers.
+            "chat_provider": "deepseek" if self.settings.has_deepseek_key else "local_fallback",
+            "chat_model": self.settings.deepseek_chat_model,
+            "chat_available": self.settings.has_deepseek_key,
+            "fallback_available": True,
+            "chat": {
+                "provider": "deepseek" if self.settings.has_deepseek_key else "local_fallback",
+                "model": self.settings.deepseek_chat_model,
+                "configured": self.settings.has_deepseek_key,
+                "last_request": self._request_health(chat_latest),
+            },
+            "structured_workflows": {
+                "memory_extract": self._structured_workflow_health(
+                    "memory_extract", self.settings.memory_extractor
+                ),
+                "memory_intent": self._structured_workflow_health(
+                    "memory_intent", self.settings.memory_intent_classifier
+                ),
+            },
+            "local_structured": {
+                "base_url": self.settings.local_lm_base_url,
+                "model": self.settings.local_structured_model,
+                "timeout_seconds": self.settings.local_structured_timeout_seconds,
+                "max_attempts": max(1, self.settings.local_structured_max_retries + 1),
+            },
+        }
+
+    def _structured_workflow_health(self, purpose: str, adapter: str) -> dict[str, Any]:
+        structured_adapters = {"llm", "structured", "deepseek", "lmstudio", "local"}
+        if adapter not in structured_adapters:
+            return {
+                "mode": "rule",
+                "provider": "rule",
+                "model": None,
+                "configured": True,
+                "available": True,
+                "last_request": None,
+            }
+
+        uses_local = self._uses_local_structured(purpose)
+        provider = "lmstudio" if uses_local else "deepseek"
+        latest = self._latest_request(purpose)
+        if latest is not None:
+            available: bool | None = not latest.get("degraded", False)
+        elif uses_local:
+            available = None
+        else:
+            available = self.settings.has_deepseek_key
+        return {
+            "mode": "structured",
+            "provider": provider,
+            "model": self.settings.local_structured_model if uses_local else self.settings.deepseek_structured_model,
+            "configured": True if uses_local else self.settings.has_deepseek_key,
+            "available": available,
+            "last_request": self._request_health(latest),
+        }
+
+    def _latest_request(self, purpose: str) -> dict[str, Any] | None:
+        return next(
+            (
+                request
+                for request in reversed(self._request_log)
+                if request.get("purpose") == purpose
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _request_health(request: dict[str, Any] | None) -> dict[str, Any] | None:
+        if request is None:
+            return None
+        return {
+            "created_at": request.get("created_at"),
+            "provider": request.get("provider"),
+            "model": request.get("model"),
+            "degraded": request.get("degraded"),
+            "elapsed_ms": request.get("elapsed_ms"),
+            "error": request.get("error"),
+        }
 
     def _prompt_stats(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         system_messages = [message for message in messages if message.get("role") == "system"]

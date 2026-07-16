@@ -73,6 +73,8 @@ MEMORY_INTENT_CLASSIFIER=lmstudio
 
 这只会把结构化记忆抽取和意图分类切到 LM Studio 的 OpenAI-compatible API；主聊天回复仍按 DeepSeek 配置运行。LM Studio 不可用、返回 degraded 或 JSON 解析失败时，记忆模块会回退到规则抽取/规则意图。本地结构化调用使用独立的 12 秒超时和 0 次重试，避免沿用远端默认值而把一次聊天阻塞到约 90 秒；可通过上述两个变量调整。注意：直接启用 `MEMORY_EXTRACTOR=lmstudio` 或 `MEMORY_INTENT_CLASSIFIER=lmstudio` 仍会把本地模型调用串入当前聊天请求，适合实验，不适合作为“不影响前台响应”的默认配置。
 
+`GET /api/llm/health` 会分别报告主聊天、记忆抽取和意图分类的实际 provider、模型、配置状态与最近一次调用结果。LM Studio 尚未被调用时 `available` 为 `null`；发生成功或降级调用后会更新为 `true` 或 `false`，健康摘要不会包含聊天原文或模型回复正文。
+
 不影响前台聊天的后台试点评估：
 
 ```powershell

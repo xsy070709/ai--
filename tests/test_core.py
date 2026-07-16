@@ -266,6 +266,67 @@ def test_lmstudio_memory_settings_select_structured_adapters(tmp_path) -> None:
     assert choose_intent_classifier(settings, gateway).name == "structured_lmstudio_intent"
 
 
+def test_llm_health_snapshot_reports_effective_structured_routes(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+        memory_extractor="lmstudio",
+        memory_intent_classifier="rule",
+        local_structured_timeout_seconds=0.5,
+        local_structured_max_retries=1,
+    )
+
+    health = DeepSeekGateway(settings).health_snapshot()
+
+    assert health["chat_provider"] == "local_fallback"
+    assert health["structured_workflows"]["memory_extract"] == {
+        "mode": "structured",
+        "provider": "lmstudio",
+        "model": "google/gemma-4-12b-qat",
+        "configured": True,
+        "available": None,
+        "last_request": None,
+    }
+    assert health["structured_workflows"]["memory_intent"]["mode"] == "rule"
+    assert health["structured_workflows"]["memory_intent"]["available"] is True
+    assert health["local_structured"]["max_attempts"] == 2
+
+
+def test_llm_health_snapshot_tracks_degraded_requests_without_prompt_data(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        deepseek_api_base_url="https://api.deepseek.com",
+        deepseek_api_key="",
+        deepseek_chat_model="deepseek-v4-flash",
+        timeout_seconds=1,
+        max_retries=0,
+        memory_extractor="lmstudio",
+    )
+
+    async def failing_chat_completion(self, **kwargs):
+        raise TimeoutError("forced local timeout")
+
+    monkeypatch.setattr("app.llm_gateway.OpenAICompatibleLocalClient.chat_completion", failing_chat_completion)
+    gateway = DeepSeekGateway(settings)
+    asyncio.run(gateway.chat([{"role": "user", "content": "私密聊天内容"}]))
+    asyncio.run(gateway.structured([{"role": "user", "content": "私密记忆内容"}], purpose="memory_extract"))
+
+    health = gateway.health_snapshot()
+    chat_request = health["chat"]["last_request"]
+    extract = health["structured_workflows"]["memory_extract"]
+
+    assert chat_request["degraded"] is True
+    assert chat_request["error"] == "missing DEEPSEEK_API_KEY"
+    assert extract["available"] is False
+    assert extract["last_request"]["error"] == "forced local timeout"
+    assert "messages" not in extract["last_request"]
+    assert "response_text" not in extract["last_request"]
+
+
 def test_memory_params_centralize_tunable_defaults() -> None:
     params = DEFAULT_MEMORY_PARAMS
 
