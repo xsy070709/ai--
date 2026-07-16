@@ -58,6 +58,14 @@ from .storage import StorageBackend, new_id, now_iso
 from .time_context import current_time_context
 
 
+class ChatContextExpiredError(RuntimeError):
+    """Raised when the entity/session used for a chat was deleted while awaiting the model."""
+
+
+class PersonaEntityNotFoundError(LookupError):
+    """Raised when an import session targets an entity that no longer exists."""
+
+
 class ChatService:
     def __init__(self, store: StorageBackend, gateway: DeepSeekGateway) -> None:
         self.store = store
@@ -217,6 +225,9 @@ class ChatService:
             ]
             state["generation_logs"] = [
                 log for log in state.get("generation_logs", []) if not self._item_in_entity(log, entity_id)
+            ]
+            state["persona_events"] = [
+                event for event in state.get("persona_events", []) if not self._item_in_entity(event, entity_id)
             ]
             state["persona_entities"] = [item for item in entities if item.get("id") != entity_id]
             if state["persona_entities"]:
@@ -438,6 +449,8 @@ class ChatService:
         state = self.store.snapshot()
         entity_id = persona_entity_id or self._active_entity_id(state)
         entity = self._entity_by_id(state, entity_id)
+        if entity is None:
+            raise PersonaEntityNotFoundError(entity_id)
         persona_name = entity.get("name", "") if entity else ""
 
         session = await self.import_sessions.create_session(
@@ -468,6 +481,8 @@ class ChatService:
         session = self.import_sessions.get_session(session_id)
         if session is None:
             raise KeyError(session_id)
+        if self._entity_by_id(self.store.snapshot(), session.entity_id) is None:
+            raise PersonaEntityNotFoundError(session.entity_id)
 
         # build persona from the final profile
         persona = persona_from_learned_profile(
@@ -488,7 +503,7 @@ class ChatService:
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
             entity = self._entity_by_id(next_state, session.entity_id)
             if entity is None:
-                return {}
+                raise PersonaEntityNotFoundError(session.entity_id)
             versions = next_state.setdefault("persona_versions", [])
             entity_versions = [p for p in versions if self._item_in_entity(p, session.entity_id)]
             persona["version"] = len(entity_versions) + 1
@@ -547,7 +562,6 @@ class ChatService:
         entity_id = self._active_entity_id(state)
         event = create_persona_event_obj(persona_entity_id=entity_id, **fields)
         memory = event_to_memory(event)
-        memory["persona_entity_id"] = entity_id
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
             next_state.setdefault("persona_events", []).append(event)
@@ -557,9 +571,11 @@ class ChatService:
         return self.store.mutate(mutate)
 
     def update_persona_event(self, event_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        entity_id = self._active_entity_id(self.store.snapshot())
+
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
             for event in state.get("persona_events", []):
-                if event.get("id") == event_id:
+                if event.get("id") == event_id and self._item_in_entity(event, entity_id):
                     allowed = {
                         "content", "event_type", "impact_scope", "expires_at",
                         "trait_effects", "becomes_topic", "topic_trigger_words",
@@ -568,17 +584,28 @@ class ChatService:
                     for key, value in patch.items():
                         if key in allowed:
                             event[key] = value
+                    self._upsert_event_memory(state, event)
                     return dict(event)
             return None
 
         return self.store.mutate(mutate)
 
     def delete_persona_event(self, event_id: str) -> bool:
+        entity_id = self._active_entity_id(self.store.snapshot())
+
         def mutate(state: dict[str, Any]) -> bool:
             events = state.get("persona_events", [])
             for event in events:
-                if event.get("id") == event_id:
+                if event.get("id") == event_id and self._item_in_entity(event, entity_id):
                     events.remove(event)
+                    state["memories"] = [
+                        memory
+                        for memory in state.get("memories", [])
+                        if not (
+                            memory.get("source_event_id") == event_id
+                            and self._item_in_entity(memory, entity_id)
+                        )
+                    ]
                     return True
             return False
 
@@ -589,21 +616,22 @@ class ChatService:
 
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
             for event in state.get("persona_events", []):
-                if event.get("id") == event_id:
+                if event.get("id") == event_id and self._item_in_entity(event, entity_id):
                     resolve_event(event, note)
-                    memory = event_to_memory(event)
-                    memory["persona_entity_id"] = entity_id
-                    state.setdefault("memories", []).append(memory)
+                    self._upsert_event_memory(state, event)
                     return dict(event)
             return None
 
         return self.store.mutate(mutate)
 
     def acknowledge_persona_event(self, event_id: str) -> dict[str, Any] | None:
+        entity_id = self._active_entity_id(self.store.snapshot())
+
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
             for event in state.get("persona_events", []):
-                if event.get("id") == event_id:
+                if event.get("id") == event_id and self._item_in_entity(event, entity_id):
                     mark_event_acknowledged(event)
+                    self._upsert_event_memory(state, event)
                     return dict(event)
             return None
 
@@ -699,8 +727,16 @@ class ChatService:
         self._tag_memories(reviewed["accepted"] + reviewed["needs_confirmation"] + reviewed["rejected"], snapshot_entity_id)
 
         def mutate(next_state: dict[str, Any]) -> dict[str, Any]:
-            write_session_id = snapshot_session_id if snapshot_session_id in next_state["sessions"] else next_state["active_session_id"]
+            if snapshot_session_id not in next_state["sessions"]:
+                raise ChatContextExpiredError(
+                    f"chat session {snapshot_session_id} was deleted before the model response could be committed"
+                )
+            write_session_id = snapshot_session_id
             write_entity_id = self._session_entity_id(next_state, write_session_id)
+            if write_entity_id != snapshot_entity_id:
+                raise ChatContextExpiredError(
+                    f"chat session {snapshot_session_id} changed persona entity before commit"
+                )
             active_session = next_state["sessions"][write_session_id]
             commit_state_revision = _state_revision(next_state)
             active_session_changed = next_state.get("active_session_id") != snapshot_session_id
@@ -751,10 +787,7 @@ class ChatService:
                 triggers = event.get("topic_trigger_words") or []
                 if triggers and any(t.lower() in (memory_user_text or "").lower() for t in triggers):
                     mark_event_acknowledged(event)
-                    # convert resolved/acknowledged events to memories
-                    event_memory = event_to_memory(event)
-                    event_memory["persona_entity_id"] = write_entity_id
-                    all_state_memories.append(event_memory)
+                    self._upsert_event_memory(next_state, event)
             prompt_manifest = {
                 "api_message_count": len(model_messages),
                 "work_memory_count": len(prompt_work_memory),
@@ -846,8 +879,9 @@ class ChatService:
 
     def delete_memory(self, memory_id: str) -> bool:
         def mutate(state: dict[str, Any]) -> bool:
+            entity_id = self._active_entity_id(state)
             for memory in state.get("memories", []):
-                if memory["id"] == memory_id:
+                if memory["id"] == memory_id and self._item_in_entity(memory, entity_id):
                     memory["status"] = "deleted"
                     memory["updated_at"] = now_iso()
                     return True
@@ -864,13 +898,19 @@ class ChatService:
 
     def confirm_memory_candidate(self, confirmation_id: str, accept: bool) -> dict[str, Any] | None:
         def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            active_entity_id = self._active_entity_id(state)
             for item in state.get("memory_confirmations", []):
                 if item["id"] != confirmation_id or item.get("status") != "pending":
                     continue
+                candidate = item.get("candidate", {})
+                if not (
+                    self._item_in_entity(item, active_entity_id)
+                    or self._item_in_entity(candidate, active_entity_id)
+                ):
+                    continue
                 item["status"] = "accepted" if accept else "rejected"
                 item["resolved_at"] = now_iso()
-                candidate = item["candidate"]
-                entity_id = candidate.get("persona_entity_id") or self._active_entity_id(state)
+                entity_id = candidate.get("persona_entity_id") or active_entity_id
                 if accept:
                     candidate["is_user_confirmed"] = True
                     candidate["quality_decision"] = "accept"
@@ -1012,6 +1052,31 @@ class ChatService:
 
     def _entity_events(self, state: dict[str, Any], entity_id: str) -> list[dict[str, Any]]:
         return [event for event in state.get("persona_events", []) if self._item_in_entity(event, entity_id)]
+
+    def _upsert_event_memory(self, state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+        memories = state.setdefault("memories", [])
+        replacement = event_to_memory(event)
+        for memory in memories:
+            if (
+                memory.get("source_event_id") == event.get("id")
+                and self._item_in_entity(memory, event.get("persona_entity_id", ""))
+            ):
+                for key in (
+                    "content",
+                    "importance",
+                    "salience",
+                    "valence",
+                    "sensitivity_level",
+                    "open",
+                    "tags",
+                    "evidence",
+                    "surface_policy",
+                    "updated_at",
+                ):
+                    memory[key] = replacement[key]
+                return memory
+        memories.append(replacement)
+        return replacement
 
     def _tag_memories(self, memories: list[dict[str, Any]], entity_id: str) -> None:
         for memory in memories:

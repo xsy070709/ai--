@@ -313,6 +313,8 @@ def test_event_to_memory_resolved():
     memory = event_to_memory(event)
     assert "她找到了新工作" in memory["content"]
     assert memory["open"] is False
+    assert memory["source_event_id"] == event["id"]
+    assert memory["persona_entity_id"] == "e1"
 
 
 # ── ChatService integration ─────────────────────────────────────────
@@ -404,6 +406,36 @@ def test_delete_event(tmp_path):
     assert service.delete_persona_event("nonexistent") is False
 
 
+def test_event_memory_tracks_updates_resolution_and_deletion(tmp_path):
+    service = make_event_service(tmp_path)
+
+    event = service.create_persona_event(content="她准备换工作", event_type="neutral")
+    initial_memory = service.memories()[0]
+
+    updated = service.update_persona_event(
+        event["id"],
+        {"content": "她已经换了工作", "event_type": "positive", "becomes_taboo": True},
+    )
+    assert updated is not None
+    memories = service.memories()
+    assert len(memories) == 1
+    assert memories[0]["id"] == initial_memory["id"]
+    assert "她已经换了工作" in memories[0]["content"]
+    assert memories[0]["valence"] == "positive"
+    assert memories[0]["sensitivity_level"] == "medium"
+
+    resolved = service.resolve_persona_event(event["id"], "已经适应新环境")
+    assert resolved is not None
+    memories = service.memories()
+    assert len(memories) == 1
+    assert memories[0]["id"] == initial_memory["id"]
+    assert "已经适应新环境" in memories[0]["content"]
+    assert memories[0]["open"] is False
+
+    assert service.delete_persona_event(event["id"]) is True
+    assert service.memories() == []
+
+
 def test_resolve_event(tmp_path):
     service = make_event_service(tmp_path)
 
@@ -461,6 +493,26 @@ def test_events_scoped_to_entity(tmp_path):
 
     service.switch_persona_entity(entity1_id)
     assert len(service.get_persona_events()) == 1  # back to first entity
+
+
+def test_event_mutations_cannot_cross_entity_boundary(tmp_path):
+    service = make_event_service(tmp_path)
+
+    first_event = service.create_persona_event(content="林夏的私有事件")
+    first_entity_id = service.status()["active_persona_entity_id"]
+    service.create_persona_entity("周白", activate=True)
+
+    assert service.update_persona_event(first_event["id"], {"content": "越界修改"}) is None
+    assert service.resolve_persona_event(first_event["id"], "越界解决") is None
+    assert service.acknowledge_persona_event(first_event["id"]) is None
+    assert service.delete_persona_event(first_event["id"]) is False
+    assert service.memories() == []
+
+    service.switch_persona_entity(first_entity_id)
+    stored_event = service.get_persona_events()[0]
+    assert stored_event["content"] == "林夏的私有事件"
+    assert stored_event["status"] == "active"
+    assert len(service.memories()) == 1
 
 
 def test_default_state_has_persona_events(tmp_path):

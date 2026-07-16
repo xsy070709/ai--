@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .chat_service import ChatService
+from .chat_service import ChatContextExpiredError, ChatService, PersonaEntityNotFoundError
 from .config import load_settings
 from .llm_gateway import DeepSeekGateway
 from .storage import create_store
@@ -109,7 +109,10 @@ def api_clear_messages() -> dict[str, Any]:
 
 @app.post("/api/chat")
 async def api_chat(request: ChatRequest) -> dict[str, Any]:
-    return await service.chat(request.message)
+    try:
+        return await service.chat(request.message)
+    except ChatContextExpiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.get("/api/persona-entities")
@@ -167,11 +170,14 @@ async def api_import_persona_materials(request: PersonaImportRequest) -> dict[st
 @app.post("/api/persona/import-session")
 async def api_start_import_session(request: ImportSessionStartRequest) -> dict[str, Any]:
     """Start a new import wizard session — paste text, get initial analysis."""
-    return await service.start_import_session(
-        request.text,
-        source_type=request.source_type,
-        persona_entity_id=request.persona_entity_id,
-    )
+    try:
+        return await service.start_import_session(
+            request.text,
+            source_type=request.source_type,
+            persona_entity_id=request.persona_entity_id,
+        )
+    except PersonaEntityNotFoundError:
+        raise HTTPException(status_code=404, detail="persona entity not found")
 
 
 @app.post("/api/persona/import-session/{session_id}/chat")
@@ -206,6 +212,8 @@ async def api_confirm_import_session(session_id: str, request: ImportSessionConf
     """Confirm and persist the profile from an import session."""
     try:
         return await service.confirm_import_session(session_id, request.profile)
+    except PersonaEntityNotFoundError:
+        raise HTTPException(status_code=404, detail="persona entity not found")
     except KeyError:
         raise HTTPException(status_code=404, detail="import session not found")
 
